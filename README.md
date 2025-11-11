@@ -2,6 +2,8 @@
 
 A Scala 3 / ZIO 2.1 implementation of TOON (Token-Oriented Object Notation), a compact serialization format optimized to reduce token usage when interacting with Large Language Models (LLMs).
 
+**Built with ZIO Best Practices**: Effect-oriented programming, service pattern, type-safe error handling, and composable dependency injection.
+
 ## What is TOON?
 
 TOON is a line-oriented, indentation-based text format that encodes the JSON data model with explicit structure and minimal quoting. It typically reduces token usage by 30-60% compared to JSON, making it ideal for LLM interactions where context window and token costs matter.
@@ -14,45 +16,62 @@ TOON is a line-oriented, indentation-based text format that encodes the JSON dat
 - **Tabular arrays**: CSV-like format for uniform data sets
 - **Human-readable**: Indentation-based structure similar to YAML
 - **Type-safe**: Full Scala 3 implementation with ADTs
-- **ZIO integration**: Native ZIO support for functional error handling
+- **ZIO-first**: Service pattern, ZLayer DI, typed errors, effect composition
 
 ## Installation
 
-Add to your `build.sbt`:
+Add to your \`build.sbt\`:
 
-```scala
+\`\`\`scala
 libraryDependencies += "io.github.riccardomerolla" %% "toon4s" % "0.1.0-SNAPSHOT"
-```
+\`\`\`
 
 ## Quick Start
 
-### Basic Encoding
+### Using Services (Recommended)
 
-```scala
+\`\`\`scala
+import io.github.riccardomerolla.toon4s._
+import ToonValue._
+import zio._
+
+// Define your application logic using services
+val program = for {
+  // Encode using the service from environment
+  encoded <- Toon.encode(obj("name" -> str("Alice"), "age" -> num(30)))
+  _       <- Console.printLine(encoded)
+  
+  // Decode using the service from environment
+  decoded <- Toon.decode(encoded)
+  _       <- Console.printLine(s"Decoded: \$decoded")
+} yield ()
+
+// Provide services at application entry point
+program.provide(Toon.live)
+\`\`\`
+
+### Pure Methods (No ZIO)
+
+For simple use cases without ZIO effects:
+
+\`\`\`scala
 import io.github.riccardomerolla.toon4s._
 import ToonValue._
 
-// Create a TOON value
-val data = obj(
-  "name" -> str("Alice"),
-  "age" -> num(30),
-  "active" -> bool(true)
-)
+// Pure encoding
+val data = obj("name" -> str("Alice"), "age" -> num(30))
+val toon = Toon.encode(data, EncoderConfig.default)
 
-// Encode to TOON format
-val toon = ToonEncoder.encode(data)
-println(toon)
-// Output:
-// name: Alice
-// age: 30
-// active: true
-```
+// Pure decoding
+val result = Toon.decode(toon, DecoderConfig.default)
+// Returns: Either[ToonError, ToonValue]
+\`\`\`
 
-### Tabular Arrays
+## Tabular Arrays - The Key Feature
 
 TOON excels at encoding arrays of uniform objects:
 
-```scala
+\`\`\`scala
 val users = obj(
   "users" -> arr(
     obj("id" -> num(1), "name" -> str("Alice"), "role" -> str("admin")),
@@ -61,60 +80,44 @@ val users = obj(
   )
 )
 
-val toon = ToonEncoder.encode(users)
+val toon = Toon.encode(users, EncoderConfig.default)
 println(toon)
 // Output:
 // users[3]{id,name,role}:
 //   1,Alice,admin
 //   2,Bob,user
 //   3,Charlie,developer
-```
-
-Compare this to JSON which would require repeating the field names for each object!
-
-### Decoding
-
-```scala
-val toonStr = """users[2]{id,name,role}:
-  1,Alice,admin
-  2,Bob,user"""
-
-val result = ToonDecoder.decode(toonStr)
-result match {
-  case Right(value) => println(s"Decoded: $value")
-  case Left(error) => println(s"Error: ${error.message}")
-}
-```
-
-### Round-trip Conversion
-
-```scala
-val original = obj("name" -> str("Alice"), "age" -> num(30))
-val encoded = ToonEncoder.encode(original)
-val decoded = ToonDecoder.decode(encoded)
-assert(decoded == Right(original))
-```
+\`\`\`
 
 ## Comparison with JSON
 
-### JSON (158 tokens)
-```json
+### JSON (222 characters)
+\`\`\`json
 {
   "users": [
     {"id": 1, "name": "Alice", "role": "admin", "active": true},
-    {"id": 2, "name": "Bob", "role": "user", "active": true},
+    {"id": 2, "name": "Bob", "role": "developer", "active": true},
     {"id": 3, "name": "Charlie", "role": "designer", "active": false}
   ]
 }
-```
+\`\`\`
 
-### TOON (87 tokens - 45% reduction!)
-```
+### TOON (101 characters - 55% reduction!)
+\`\`\`
 users[3]{id,name,role,active}:
   1,Alice,admin,true
-  2,Bob,user,true
+  2,Bob,developer,true
   3,Charlie,designer,false
-```
+\`\`\`
+
+## ZIO Best Practices Applied
+
+✅ **Effects as Blueprints** - All ZIO effects are pure descriptions  
+✅ **Service Pattern** - Traits with Live implementations  
+✅ **ZLayer DI** - Services provided at application boundaries  
+✅ **Type-Safe Errors** - All errors in error channel, never thrown  
+✅ **Exhaustive Error Handling** - Pattern matching covers all cases  
+✅ **No Side Effects** - All I/O wrapped in ZIO effects  
 
 ## Specification
 
