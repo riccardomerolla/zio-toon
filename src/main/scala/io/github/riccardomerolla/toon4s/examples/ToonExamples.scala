@@ -5,36 +5,63 @@ import ToonValue._
 import zio._
 
 /**
- * Examples demonstrating the usage of toon4s.
+ * Examples demonstrating the usage of toon4s with ZIO best practices.
+ * 
+ * This demonstrates effect-oriented programming:
+ * - Effects are immutable blueprints
+ * - Services are accessed via ZIO environment
+ * - Errors are handled in the error channel
+ * - Resources are managed properly
  */
 object ToonExamples extends ZIOAppDefault {
   
-  def run = for {
-    _ <- printExample("Basic Primitives", basicPrimitives)
-    _ <- printExample("Simple Object", simpleObject)
-    _ <- printExample("Nested Objects", nestedObjects)
-    _ <- printExample("Inline Arrays", inlineArrays)
-    _ <- printExample("Tabular Arrays", tabularArrays)
-    _ <- printExample("Tab Delimiter", tabDelimiter)
-    _ <- printExampleIO("Round-trip", roundTrip)
-  } yield ExitCode.success
+  /**
+   * Main application logic composed as a ZIO effect.
+   * Effects are pure descriptions - execution is deferred until the end.
+   */
+  def run = {
+    val examples = for {
+      _ <- printExample("Basic Primitives", basicPrimitives)
+      _ <- printExample("Simple Object", simpleObject)
+      _ <- printExample("Nested Objects", nestedObjects)
+      _ <- printExample("Inline Arrays", inlineArrays)
+      _ <- printExample("Tabular Arrays", tabularArrays)
+      _ <- printExample("Tab Delimiter", tabDelimiter)
+      _ <- printExampleWithError("Round-trip with Services", roundTripWithServices)
+      _ <- printExample("Error Handling", errorHandling)
+    } yield ExitCode.success
+    
+    // Provide the required services at the application entry point
+    examples.provide(Toon.live)
+  }
   
-  def printExample(title: String, example: UIO[String]): UIO[Unit] = {
+  /**
+   * Helper to print an example with proper error handling.
+   * Uses ZIO's catchAll for exhaustive error matching.
+   */
+  def printExample[R](title: String, example: ZIO[R, Nothing, String]): ZIO[R, Nothing, Unit] =
     for {
       _ <- Console.printLine(s"\n=== $title ===").orDie
       result <- example
       _ <- Console.printLine(result).orDie
     } yield ()
-  }
   
-  def printExampleIO(title: String, example: IO[ToonError, String]): UIO[Unit] = {
+  /**
+   * Helper to print an example that can error, catching all errors.
+   */
+  def printExampleWithError[R](title: String, example: ZIO[R, ToonError, String]): ZIO[R, Nothing, Unit] =
     for {
       _ <- Console.printLine(s"\n=== $title ===").orDie
-      result <- example.catchAll(err => ZIO.succeed(s"Error: ${err.message}"))
+      result <- example.catchAll { error =>
+        ZIO.succeed(s"Error: ${error.message}")
+      }
       _ <- Console.printLine(result).orDie
     } yield ()
-  }
   
+  /**
+   * Basic primitives example.
+   * Pure computation wrapped in ZIO.succeed.
+   */
   def basicPrimitives: UIO[String] = ZIO.succeed {
     val examples = List(
       ("String", str("hello")),
@@ -47,7 +74,8 @@ object ToonExamples extends ZIOAppDefault {
     )
     
     examples.map { case (desc, value) =>
-      s"$desc: ${Toon.encode(value)}"
+      // Use the pure encode method with explicit config parameter
+      s"$desc: ${Toon.encode(value, EncoderConfig.default)}"
     }.mkString("\n")
   }
   
@@ -58,7 +86,7 @@ object ToonExamples extends ZIOAppDefault {
       "active" -> bool(true)
     )
     
-    Toon.encode(user)
+    Toon.encode(user, EncoderConfig.default)
   }
   
   def nestedObjects: UIO[String] = ZIO.succeed {
@@ -72,7 +100,7 @@ object ToonExamples extends ZIOAppDefault {
       )
     )
     
-    Toon.encode(data)
+    Toon.encode(data, EncoderConfig.default)
   }
   
   def inlineArrays: UIO[String] = ZIO.succeed {
@@ -82,7 +110,7 @@ object ToonExamples extends ZIOAppDefault {
       "flags" -> arr(bool(true), bool(false), bool(true))
     )
     
-    Toon.encode(data)
+    Toon.encode(data, EncoderConfig.default)
   }
   
   def tabularArrays: UIO[String] = ZIO.succeed {
@@ -94,7 +122,7 @@ object ToonExamples extends ZIOAppDefault {
       )
     )
     
-    val toon = Toon.encode(data)
+    val toon = Toon.encode(data, EncoderConfig.default)
     
     // Compare with JSON size
     val jsonEquivalent = """{
@@ -122,7 +150,15 @@ object ToonExamples extends ZIOAppDefault {
     s"Using tab delimiter:\n$toon"
   }
   
-  def roundTrip: IO[ToonError, String] = {
+  /**
+   * Round-trip example using service-based approach.
+   * 
+   * This demonstrates:
+   * - Using services from the environment (ToonEncoderService & ToonDecoderService)
+   * - Effect composition with for-comprehension
+   * - Type-safe error handling in the error channel
+   */
+  def roundTripWithServices: ZIO[ToonEncoderService & ToonDecoderService, ToonError, String] = {
     val original = obj(
       "user" -> obj(
         "name" -> str("Alice"),
@@ -135,12 +171,39 @@ object ToonExamples extends ZIOAppDefault {
       )
     )
     
+    // Effect composition: encode then decode
+    // Effects are blueprints - nothing executes until the end
     for {
-      encoded <- Toon.encodeZ(original)
-      decoded <- Toon.decodeZ(encoded)
+      encoded <- Toon.encode(original)
+      decoded <- Toon.decode(encoded)
       matches = decoded == original
     } yield {
       "Original value encoded to TOON:\n" + encoded + "\n\nDecoded back matches original: " + matches
     }
+  }
+  
+  /**
+   * Error handling example.
+   * 
+   * Demonstrates:
+   * - Typed errors in the error channel
+   * - Proper error handling with catchAll
+   * - Never swallowing errors
+   */
+  def errorHandling: ZIO[ToonDecoderService, Nothing, String] = {
+    val invalidInput = "key1: value1\nkey2"  // Missing colon in strict mode
+    
+    // Attempt to decode invalid input - handle all error cases
+    Toon.decode(invalidInput)
+      .map(value => s"Successfully decoded: $value")
+      .catchAll {
+        case ToonError.MissingColon(line) =>
+          ZIO.succeed(s"Caught expected error: Missing colon at line $line")
+        case ToonError.ParseError(msg) =>
+          ZIO.succeed(s"Caught parse error: $msg")
+        case other =>
+          // Handle all other ToonError cases
+          ZIO.succeed(s"Caught error: ${other.message}")
+      }
   }
 }

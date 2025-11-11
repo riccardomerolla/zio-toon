@@ -5,102 +5,101 @@ import zio.test._
 import zio.test.Assertion._
 import ToonValue._
 
+/**
+ * Tests for ZIO integration following ZIO best practices.
+ * 
+ * Key principles demonstrated:
+ * - Services provided via ZLayer at test suite level
+ * - Effects composed through for-comprehension
+ * - Typed errors handled in error channel
+ * - Tests are deterministic and repeatable
+ */
 object ToonZIOSpec extends ZIOSpecDefault {
   
   def spec = suite("TOON ZIO Integration")(
     
-    suite("ToonEncoderZ")(
-      test("encode with ZIO effect") {
+    suite("ToonEncoderService")(
+      test("encode with service from environment") {
         val value = obj("name" -> str("Alice"), "age" -> num(30))
         for {
-          encoded <- ToonEncoderZ.encode(value)
+          encoded <- ToonEncoderService.encode(value)
         } yield assertTrue(encoded == "name: Alice\nage: 30")
-      },
+      }.provide(ToonEncoderService.live),
       
-      test("make encoder") {
+      test("encode with custom configuration") {
+        val value = obj("data" -> arr(str("a"), str("b")))
         for {
-          encoder <- ToonEncoderZ.make()
-          encoded = encoder.encode(obj("test" -> str("value")))
-        } yield assertTrue(encoded == "test: value")
-      }
+          encoded <- ToonEncoderService.encode(value)
+        } yield assertTrue(encoded.contains("\t"))
+      }.provide(ToonEncoderService.configured(EncoderConfig(delimiter = Delimiter.Tab)))
     ),
     
-    suite("ToonDecoderZ")(
-      test("decode with ZIO effect") {
+    suite("ToonDecoderService")(
+      test("decode with service from environment") {
         val input = "name: Alice\nage: 30"
         val expected = obj("name" -> str("Alice"), "age" -> num(30))
         for {
-          decoded <- ToonDecoderZ.decode(input)
+          decoded <- ToonDecoderService.decode(input)
         } yield assertTrue(decoded == expected)
-      },
+      }.provide(ToonDecoderService.live),
       
-      test("decode error handling") {
+      test("decode error handling with typed errors") {
         val input = "key1: value1\nkey2"  // Missing colon in strict mode
-        val config = DecoderConfig(strictMode = true)
         for {
-          result <- ToonDecoderZ.decode(input, config).either
-        } yield assertTrue(result.isLeft)
-      },
+          result <- ToonDecoderService.decode(input).exit
+        } yield assert(result)(fails(isSubtype[ToonError.MissingColon](anything)))
+      }.provide(ToonDecoderService.live),
       
-      test("make decoder") {
+      test("decode with custom configuration") {
         val input = "test: value"
         for {
-          decoder <- ToonDecoderZ.make()
-          result = decoder.decode(input)
-        } yield assertTrue(result == Right(obj("test" -> str("value"))))
-      }
+          decoded <- ToonDecoderService.decode(input)
+        } yield assertTrue(decoded == obj("test" -> str("value")))
+      }.provide(ToonDecoderService.configured(DecoderConfig(strictMode = false)))
     ),
     
-    suite("Toon convenience API")(
-      test("encode convenience method") {
-        val value = obj("key" -> str("value"))
-        val encoded = Toon.encode(value)
-        assertTrue(encoded == "key: value")
-      },
-      
-      test("decode convenience method") {
-        val input = "key: value"
-        val result = Toon.decode(input)
-        assertTrue(result == Right(obj("key" -> str("value"))))
-      },
-      
-      test("encodeZ convenience method") {
+    suite("Toon API with services")(
+      test("encode with service from environment") {
         val value = obj("key" -> str("value"))
         for {
-          encoded <- Toon.encodeZ(value)
+          encoded <- Toon.encode(value)
         } yield assertTrue(encoded == "key: value")
-      },
+      }.provide(ToonEncoderService.live),
       
-      test("decodeZ convenience method") {
+      test("decode with service from environment") {
         val input = "key: value"
         for {
-          decoded <- Toon.decodeZ(input)
+          decoded <- Toon.decode(input)
         } yield assertTrue(decoded == obj("key" -> str("value")))
-      },
+      }.provide(ToonDecoderService.live),
       
-      test("roundTrip convenience method") {
+      test("roundTrip with composed services") {
         val original = obj(
           "name" -> str("Alice"),
           "age" -> num(30),
           "active" -> bool(true)
         )
-        val result = Toon.roundTrip(original)
-        assertTrue(result == Right(original))
-      },
+        for {
+          roundTripped <- Toon.roundTrip(original)
+        } yield assertTrue(roundTripped == original)
+      }.provide(Toon.live),
       
-      test("roundTripZ convenience method") {
+      test("roundTrip with custom configuration") {
         val original = obj(
           "name" -> str("Bob"),
           "tags" -> arr(str("admin"), str("ops"))
         )
         for {
-          roundTripped <- Toon.roundTripZ(original)
+          roundTripped <- Toon.roundTrip(original)
         } yield assertTrue(roundTripped == original)
-      }
+      }.provide(Toon.configured(
+        encoderConfig = EncoderConfig(indentSize = 4),
+        decoderConfig = DecoderConfig(strictMode = true)
+      ))
     ),
     
     suite("Round-trip with tabular arrays")(
-      test("tabular array round-trip") {
+      test("tabular array round-trip using services") {
         val original = obj(
           "users" -> arr(
             obj("id" -> num(1), "name" -> str("Alice"), "role" -> str("admin")),
@@ -108,8 +107,46 @@ object ToonZIOSpec extends ZIOSpecDefault {
           )
         )
         for {
-          roundTripped <- Toon.roundTripZ(original)
+          roundTripped <- Toon.roundTrip(original)
         } yield assertTrue(roundTripped == original)
+      }.provide(Toon.live)
+    ),
+    
+    suite("Error handling with typed errors")(
+      test("handle specific error types") {
+        val invalidInput = "key1: value1\nkey2"  // Missing colon
+        for {
+          result <- Toon.decode(invalidInput).catchSome {
+            case ToonError.MissingColon(line) => 
+              ZIO.succeed(obj("error" -> str(s"Missing colon at line $line")))
+          }
+        } yield result match {
+          case Obj(fields) => assertTrue(fields.nonEmpty)
+          case _ => assertTrue(false)
+        }
+      }.provide(ToonDecoderService.live),
+      
+      test("error propagation in effect channel") {
+        val invalidInput = "key1: value1\nkey2"
+        for {
+          exit <- Toon.decode(invalidInput).exit
+        } yield assert(exit)(fails(isSubtype[ToonError](anything)))
+      }.provide(ToonDecoderService.live)
+    ),
+    
+    suite("Legacy compatibility")(
+      test("ToonEncoderZ.encode still works") {
+        val value = obj("test" -> str("value"))
+        for {
+          encoded <- ToonEncoderZ.encode(value)
+        } yield assertTrue(encoded == "test: value")
+      },
+      
+      test("ToonDecoderZ.decode still works") {
+        val input = "test: value"
+        for {
+          decoded <- ToonDecoderZ.decode(input)
+        } yield assertTrue(decoded == obj("test" -> str("value")))
       }
     )
   )
