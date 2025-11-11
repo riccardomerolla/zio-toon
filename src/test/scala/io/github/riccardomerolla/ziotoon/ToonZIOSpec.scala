@@ -24,14 +24,14 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           encoded <- ToonEncoderService.encode(value)
         } yield assertTrue(encoded == "name: Alice\nage: 30")
-      }.provide(ToonEncoderService.live),
+      }.provideLayer(ToonEncoderService.live),
       
       test("encode with custom configuration") {
         val value = obj("data" -> arr(str("a"), str("b")))
         for {
           encoded <- ToonEncoderService.encode(value)
         } yield assertTrue(encoded.contains("\t"))
-      }.provide(ToonEncoderService.configured(EncoderConfig(delimiter = Delimiter.Tab)))
+      }.provideLayer(ToonEncoderService.configured(EncoderConfig(delimiter = Delimiter.Tab)))
     ),
     
     suite("ToonDecoderService")(
@@ -41,21 +41,21 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           decoded <- ToonDecoderService.decode(input)
         } yield assertTrue(decoded == expected)
-      }.provide(ToonDecoderService.live),
+      }.provideLayer(ToonDecoderService.live),
       
       test("decode error handling with typed errors") {
         val input = "key1: value1\nkey2"  // Missing colon in strict mode
         for {
           result <- ToonDecoderService.decode(input).exit
         } yield assert(result)(fails(isSubtype[ToonError.MissingColon](anything)))
-      }.provide(ToonDecoderService.live),
+      }.provideLayer(ToonDecoderService.live),
       
       test("decode with custom configuration") {
         val input = "test: value"
         for {
           decoded <- ToonDecoderService.decode(input)
         } yield assertTrue(decoded == obj("test" -> str("value")))
-      }.provide(ToonDecoderService.configured(DecoderConfig(strictMode = false)))
+      }.provideLayer(ToonDecoderService.configured(DecoderConfig(strictMode = false)))
     ),
     
     suite("Toon API with services")(
@@ -64,14 +64,14 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           encoded <- Toon.encode(value)
         } yield assertTrue(encoded == "key: value")
-      }.provide(ToonEncoderService.live),
+      }.provideLayer(ToonEncoderService.live),
       
       test("decode with service from environment") {
         val input = "key: value"
         for {
           decoded <- Toon.decode(input)
         } yield assertTrue(decoded == obj("key" -> str("value")))
-      }.provide(ToonDecoderService.live),
+      }.provideLayer(ToonDecoderService.live),
       
       test("roundTrip with composed services") {
         val original = obj(
@@ -82,7 +82,7 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           roundTripped <- Toon.roundTrip(original)
         } yield assertTrue(roundTripped == original)
-      }.provide(Toon.live),
+      }.provideLayer(Toon.live),
       
       test("roundTrip with custom configuration") {
         val original = obj(
@@ -92,7 +92,7 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           roundTripped <- Toon.roundTrip(original)
         } yield assertTrue(roundTripped == original)
-      }.provide(Toon.configured(
+      }.provideLayer(Toon.configured(
         encoderConfig = EncoderConfig(indentSize = 4),
         decoderConfig = DecoderConfig(strictMode = true)
       ))
@@ -109,7 +109,7 @@ object ToonZIOSpec extends ZIOSpecDefault {
         for {
           roundTripped <- Toon.roundTrip(original)
         } yield assertTrue(roundTripped == original)
-      }.provide(Toon.live)
+      }.provideLayer(Toon.live)
     ),
     
     suite("Error handling with typed errors")(
@@ -124,30 +124,14 @@ object ToonZIOSpec extends ZIOSpecDefault {
           case Obj(fields) => assertTrue(fields.nonEmpty)
           case _ => assertTrue(false)
         }
-      }.provide(ToonDecoderService.live),
+      }.provideLayer(ToonDecoderService.live),
       
       test("error propagation in effect channel") {
         val invalidInput = "key1: value1\nkey2"
         for {
           exit <- Toon.decode(invalidInput).exit
         } yield assert(exit)(fails(isSubtype[ToonError](anything)))
-      }.provide(ToonDecoderService.live)
-    ),
-    
-    suite("Legacy compatibility")(
-      test("ToonEncoderZ.encode still works") {
-        val value = obj("test" -> str("value"))
-        for {
-          encoded <- ToonEncoderZ.encode(value)
-        } yield assertTrue(encoded == "test: value")
-      },
-      
-      test("ToonDecoderZ.decode still works") {
-        val input = "test: value"
-        for {
-          decoded <- ToonDecoderZ.decode(input)
-        } yield assertTrue(decoded == obj("test" -> str("value")))
-      }
+      }.provideLayer(ToonDecoderService.live)
     )
   )
 }

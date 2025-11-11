@@ -17,6 +17,8 @@ TOON is a line-oriented, indentation-based text format that encodes the JSON dat
 - **Human-readable**: Indentation-based structure similar to YAML
 - **Type-safe**: Full Scala 3 implementation with ADTs
 - **ZIO-first**: Service pattern, ZLayer DI, typed errors, effect composition
+- **JSON Integration**: Bidirectional conversion with zio-json, token savings calculation
+- **Schema Support**: Automatic encoding/decoding with zio-schema for case classes
 
 ## Installation
 
@@ -47,7 +49,7 @@ val program = for {
 } yield ()
 
 // Provide services at application entry point
-program.provide(Toon.live)
+program.provideLayer(Toon.live)
 ```
 
 ### Pure Methods (No ZIO)
@@ -65,6 +67,64 @@ val toon = Toon.encode(data, EncoderConfig.default)
 // Pure decoding
 val result = Toon.decode(toon, DecoderConfig.default)
 // Returns: Either[ToonError, ToonValue]
+```
+
+### JSON Integration
+
+Convert between JSON and TOON, and measure token savings:
+
+```scala
+import io.github.riccardomerolla.ziotoon._
+import ToonValue._
+import zio._
+
+val program = for {
+  // Convert JSON to TOON
+  jsonString <- ToonJsonService.fromJson("""{"name":"Alice","age":30}""")
+  toonString <- ToonEncoderService.encode(jsonString)
+  
+  // Calculate token savings
+  value = obj("name" -> str("Alice"), "age" -> num(30))
+  savings <- ToonJsonService.calculateSavings(value)
+  _ <- Console.printLine(s"Savings: ${savings.savingsPercent}%")
+  
+  // Convert TOON to JSON
+  jsonOut <- ToonJsonService.toJson(value)
+  _ <- Console.printLine(jsonOut)
+} yield ()
+
+// Provide layers
+program.provideLayer(ToonJsonService.live ++ ToonEncoderService.live)
+```
+
+### Schema-Based Type-Safe Encoding
+
+Automatically encode/decode case classes using zio-schema:
+
+```scala
+import io.github.riccardomerolla.ziotoon._
+import zio._
+import zio.schema._
+
+case class Person(name: String, age: Int)
+object Person {
+  given schema: Schema[Person] = DeriveSchema.gen[Person]
+}
+
+val program = for {
+  // Encode case class to TOON
+  person = Person("Alice", 30)
+  toonString <- ZIO.serviceWithZIO[ToonSchemaService](_.encode(person))
+  _ <- Console.printLine(toonString)
+  
+  // Decode TOON to case class
+  decoded <- ZIO.serviceWithZIO[ToonSchemaService](_.decode[Person](toonString))
+  _ <- Console.printLine(s"Decoded: $decoded")
+} yield ()
+
+// Provide layers
+val layer = ToonJsonService.live >>> ToonSchemaService.live
+program.provideLayer(layer)
 ```
 
 ## Tabular Arrays - The Key Feature
@@ -118,6 +178,95 @@ users[3]{id,name,role,active}:
 ✅ **Type-Safe Errors** - All errors in error channel, never thrown  
 ✅ **Exhaustive Error Handling** - Pattern matching covers all cases  
 ✅ **No Side Effects** - All I/O wrapped in ZIO effects  
+
+## API Reference
+
+### Core Services
+
+#### ToonEncoderService
+Encodes `ToonValue` to TOON format strings.
+
+```scala
+trait ToonEncoderService {
+  def encode(value: ToonValue): UIO[String]
+}
+```
+
+#### ToonDecoderService
+Decodes TOON format strings to `ToonValue`.
+
+```scala
+trait ToonDecoderService {
+  def decode(input: String): IO[ToonError, ToonValue]
+}
+```
+
+#### ToonJsonService
+Bidirectional conversion between JSON and TOON, with token savings calculation.
+
+```scala
+trait ToonJsonService {
+  def toJson(value: ToonValue): UIO[String]
+  def fromJson(json: String): IO[String, ToonValue]
+  def calculateSavings(value: ToonValue): URIO[ToonEncoderService, TokenSavings]
+  def toPrettyJson(value: ToonValue, indent: Int = 2): UIO[String]
+}
+```
+
+**TokenSavings** provides:
+- `jsonSize: Int` - JSON character count
+- `toonSize: Int` - TOON character count
+- `savings: Int` - Absolute character difference
+- `savingsPercent: Double` - Percentage saved (0-100)
+
+#### ToonSchemaService
+Type-safe encoding/decoding using zio-schema.
+
+```scala
+trait ToonSchemaService {
+  def encode[A](value: A)(using schema: Schema[A]): IO[String, String]
+  def decode[A](toonString: String)(using schema: Schema[A]): IO[String, A]
+  def encodeWithConfig[A](value: A, config: EncoderConfig)(using schema: Schema[A]): IO[String, String]
+  def decodeWithConfig[A](toonString: String, config: DecoderConfig)(using schema: Schema[A]): IO[String, A]
+}
+```
+
+### Configuration
+
+#### EncoderConfig
+```scala
+case class EncoderConfig(
+  indentSize: Int = 2,
+  delimiter: Delimiter = Delimiter.Comma
+)
+```
+
+#### DecoderConfig
+```scala
+case class DecoderConfig(
+  strictMode: Boolean = true,
+  indentSize: Int = 2,
+  expandPaths: PathExpansion = PathExpansion.Off
+)
+```
+
+### Layers
+
+Provide services at your application entry point:
+
+```scala
+// Basic TOON encoding/decoding
+val toonLayer = Toon.live
+
+// With JSON integration
+val jsonLayer = ToonJsonService.live ++ ToonEncoderService.live
+
+// With schema support
+val schemaLayer = ToonJsonService.live >>> ToonSchemaService.live
+
+// Complete integration
+val fullLayer = ToonEncoderService.live ++ ToonDecoderService.live ++ ToonJsonService.live
+```
 
 ## Specification
 
