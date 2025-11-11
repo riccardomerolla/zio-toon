@@ -126,7 +126,7 @@ This demonstrates the key advantage of TOON: eliminating redundant field name re
 
 ### Basic Encoding
 ```scala
-import io.github.riccardomerolla.toon4s._
+import io.github.riccardomerolla.ziotoon._
 import ToonValue._
 
 val data = obj(

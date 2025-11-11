@@ -1,4 +1,4 @@
-package io.github.riccardomerolla.toon4s
+package io.github.riccardomerolla.ziotoon
 
 /**
  * Configuration options for TOON decoding.

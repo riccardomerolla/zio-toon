@@ -4,7 +4,7 @@ ThisBuild / organization := "io.github.riccardomerolla"
 
 lazy val root = (project in file("."))
   .settings(
-    name := "toon4s",
+    name := "zio-toon",
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.1.9",
       "dev.zio" %% "zio-streams" % "2.1.9",

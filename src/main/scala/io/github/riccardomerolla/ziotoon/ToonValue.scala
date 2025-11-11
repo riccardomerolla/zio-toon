@@ -1,4 +1,4 @@
-package io.github.riccardomerolla.toon4s
+package io.github.riccardomerolla.ziotoon
 
 import zio.Chunk
 

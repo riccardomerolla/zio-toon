@@ -1,11 +1,11 @@
-package io.github.riccardomerolla.toon4s.examples
+package io.github.riccardomerolla.ziotoon.examples
 
-import io.github.riccardomerolla.toon4s._
+import io.github.riccardomerolla.ziotoon._
 import ToonValue._
 import zio._
 
 /**
- * Examples demonstrating the usage of toon4s with ZIO best practices.
+ * Examples demonstrating the usage of zio-toon with ZIO best practices.
  * 
  * This demonstrates effect-oriented programming:
  * - Effects are immutable blueprints
