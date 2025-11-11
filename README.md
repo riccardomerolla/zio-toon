@@ -43,7 +43,7 @@ val program = for {
   
   // Decode using the service from environment
   decoded <- Toon.decode(encoded)
-  _       <- Console.printLine(s"Decoded: \$decoded")
+  _       <- Console.printLine(s"Decoded: $decoded")
 } yield ()
 
 // Provide services at application entry point
