@@ -20,17 +20,17 @@ TOON is a line-oriented, indentation-based text format that encodes the JSON dat
 
 ## Installation
 
-Add to your \`build.sbt\`:
+Add to your `build.sbt`:
 
-\`\`\`scala
+```scala
 libraryDependencies += "io.github.riccardomerolla" %% "toon4s" % "0.1.0-SNAPSHOT"
-\`\`\`
+```
 
 ## Quick Start
 
 ### Using Services (Recommended)
 
-\`\`\`scala
+```scala
 import io.github.riccardomerolla.toon4s._
 import ToonValue._
 import zio._
@@ -48,13 +48,13 @@ val program = for {
 
 // Provide services at application entry point
 program.provide(Toon.live)
-\`\`\`
+```
 
 ### Pure Methods (No ZIO)
 
 For simple use cases without ZIO effects:
 
-\`\`\`scala
+```scala
 import io.github.riccardomerolla.toon4s._
 import ToonValue._
 
@@ -65,13 +65,13 @@ val toon = Toon.encode(data, EncoderConfig.default)
 // Pure decoding
 val result = Toon.decode(toon, DecoderConfig.default)
 // Returns: Either[ToonError, ToonValue]
-\`\`\`
+```
 
 ## Tabular Arrays - The Key Feature
 
 TOON excels at encoding arrays of uniform objects:
 
-\`\`\`scala
+```scala
 val users = obj(
   "users" -> arr(
     obj("id" -> num(1), "name" -> str("Alice"), "role" -> str("admin")),
@@ -87,12 +87,12 @@ println(toon)
 //   1,Alice,admin
 //   2,Bob,user
 //   3,Charlie,developer
-\`\`\`
+```
 
 ## Comparison with JSON
 
 ### JSON (222 characters)
-\`\`\`json
+```json
 {
   "users": [
     {"id": 1, "name": "Alice", "role": "admin", "active": true},
@@ -100,15 +100,15 @@ println(toon)
     {"id": 3, "name": "Charlie", "role": "designer", "active": false}
   ]
 }
-\`\`\`
+```
 
 ### TOON (101 characters - 55% reduction!)
-\`\`\`
+```
 users[3]{id,name,role,active}:
   1,Alice,admin,true
   2,Bob,developer,true
   3,Charlie,designer,false
-\`\`\`
+```
 
 ## ZIO Best Practices Applied
 
