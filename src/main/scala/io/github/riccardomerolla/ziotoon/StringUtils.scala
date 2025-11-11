@@ -1,9 +1,9 @@
-package io.github.riccardomerolla.toon4s
+package io.github.riccardomerolla.ziotoon
 
 /**
  * Utilities for string quoting and escaping according to TOON specification.
  */
-private[toon4s] object StringUtils {
+private[ziotoon] object StringUtils {
   
   /**
    * Escape a string according to TOON rules (Section 7.1).

@@ -23,7 +23,7 @@ TOON is a line-oriented, indentation-based text format that encodes the JSON dat
 Add to your `build.sbt`:
 
 ```scala
-libraryDependencies += "io.github.riccardomerolla" %% "toon4s" % "0.1.0-SNAPSHOT"
+libraryDependencies += "io.github.riccardomerolla" %% "zio-toon" % "0.1.0-SNAPSHOT"
 ```
 
 ## Quick Start
@@ -31,7 +31,7 @@ libraryDependencies += "io.github.riccardomerolla" %% "toon4s" % "0.1.0-SNAPSHOT
 ### Using Services (Recommended)
 
 ```scala
-import io.github.riccardomerolla.toon4s._
+import io.github.riccardomerolla.ziotoon._
 import ToonValue._
 import zio._
 
@@ -55,7 +55,7 @@ program.provide(Toon.live)
 For simple use cases without ZIO effects:
 
 ```scala
-import io.github.riccardomerolla.toon4s._
+import io.github.riccardomerolla.ziotoon._
 import ToonValue._
 
 // Pure encoding
