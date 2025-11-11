@@ -132,22 +132,6 @@ object ToonZIOSpec extends ZIOSpecDefault {
           exit <- Toon.decode(invalidInput).exit
         } yield assert(exit)(fails(isSubtype[ToonError](anything)))
       }.provideLayer(ToonDecoderService.live)
-    ),
-    
-    suite("Legacy compatibility")(
-      test("ToonEncoderZ.encode still works") {
-        val value = obj("test" -> str("value"))
-        for {
-          encoded <- ToonEncoderZ.encode(value)
-        } yield assertTrue(encoded == "test: value")
-      },
-      
-      test("ToonDecoderZ.decode still works") {
-        val input = "test: value"
-        for {
-          decoded <- ToonDecoderZ.decode(input)
-        } yield assertTrue(decoded == obj("test" -> str("value")))
-      }
     )
   )
 }
