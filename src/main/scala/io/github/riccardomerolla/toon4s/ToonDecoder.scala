@@ -33,8 +33,12 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     
     // Determine root form
     val firstLine = lines.head
-    if (firstLine.content.matches("^[^:\\[]+\\[\\d+.*\\]:.*")) {
-      // Array at root
+    // Check if it's a keyed array (e.g., "users[2]{...}:" or "tags[3]:")
+    if (firstLine.content.matches("^.+\\[\\d+.*\\]:.*") && firstLine.content.contains("[")) {
+      // This is an object with array field at root
+      parseObject(lines, 0)._1
+    } else if (firstLine.content.matches("^\\[\\d+.*\\]:.*")) {
+      // Array at root without key
       parseArray(lines, 0, None)._1
     } else if (firstLine.content.contains(":")) {
       // Object at root
@@ -150,24 +154,61 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
           idx += 1
         } else {
           // Check if this is an array header (key[N]: ...)
-          if (content.matches("^[^:]+\\[\\d+.*?\\]:.*")) {
-            // This is an inline array or array header
-            parseArrayLine(content, line.lineNumber) match {
-              case Left(err) => return (Left(err), idx - startIdx)
-              case Right((key, arr)) =>
-                fields += ((key, arr))
-                
-                // Check if there are child lines (for tabular/list arrays)
-                if (idx + 1 < lines.length && lines(idx + 1).depth > startDepth) {
-                  // We need to consume child lines - this should have been handled by parseArrayLine
-                  // For now, just skip them
-                  idx += 1
-                  while (idx < lines.length && lines(idx).depth > startDepth) {
-                    idx += 1
+          // Use a more specific regex that doesn't over-match
+          if (content.matches("^.+?\\[\\d+[|\\t]?\\](?:\\{.+?\\})?:.*")) {
+            // Extract the array header info
+            val headerMatch = """^(.+?)\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
+            content match {
+              case headerMatch(keyPart, lengthStr, delimSymbol, fieldList, values) =>
+                val key = keyPart.trim
+                val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
+                  unescape(key.substring(1, key.length - 1)) match {
+                    case Left(msg) => return (Left(InvalidEscape(msg, line.lineNumber)), idx - startIdx)
+                    case Right(k) => k
                   }
                 } else {
-                  idx += 1
+                  key
                 }
+                
+                val length = lengthStr.toInt
+                val delimiter = if (delimSymbol == "\t") Delimiter.Tab
+                               else if (delimSymbol == "|") Delimiter.Pipe
+                               else Delimiter.Comma
+                
+                if (values.nonEmpty) {
+                  // Inline array
+                  parseInlineArrayValues(values, delimiter, length, line.lineNumber) match {
+                    case Left(err) => return (Left(err), idx - startIdx)
+                    case Right(arr) =>
+                      fields += ((unquotedKey, arr))
+                      idx += 1
+                  }
+                } else if (fieldList != null && fieldList.nonEmpty) {
+                  // Tabular array with child rows
+                  val (result, consumed) = parseTabularArray(lines, idx + 1, length, fieldList, delimiter, line.depth)
+                  result match {
+                    case Left(err) => return (Left(err), idx - startIdx)
+                    case Right(arr) =>
+                      fields += ((unquotedKey, arr))
+                      idx += consumed + 1
+                  }
+                } else if (length == 0) {
+                  // Empty array
+                  fields += ((unquotedKey, Arr.empty))
+                  idx += 1
+                } else {
+                  // List array with child items
+                  val (result, consumed) = parseListArray(lines, idx + 1, length, line.depth)
+                  result match {
+                    case Left(err) => return (Left(err), idx - startIdx)
+                    case Right(arr) =>
+                      fields += ((unquotedKey, arr))
+                      idx += consumed + 1
+                  }
+                }
+                
+              case _ =>
+                return (Left(ParseError(s"Invalid array header at line ${line.lineNumber}")), idx - startIdx)
             }
           } else {
             val colonIdx = findUnquotedColon(content)

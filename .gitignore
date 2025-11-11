@@ -12,6 +12,7 @@ project/project/
 .metals/
 .bloop/
 metals.sbt
+sbt/
 
 # IDE
 .idea/
