@@ -1,4 +1,4 @@
-# toon4s
+# zio-toon
 
 A Scala 3 / ZIO 2.1 implementation of TOON (Token-Oriented Object Notation), a compact serialization format optimized to reduce token usage when interacting with Large Language Models (LLMs).
 
