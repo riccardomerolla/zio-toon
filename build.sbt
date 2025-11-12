@@ -3,27 +3,28 @@ ThisBuild / organization := "io.github.riccardomerolla"
 ThisBuild / organizationName := "Riccardo Merolla"
 ThisBuild / organizationHomepage := Some(url("https://github.com/riccardomerolla"))
 
+inThisBuild(List(
+  organization := "io.github.riccardomerolla",
+  homepage := Some(url("https://github.com/riccardomerolla/zio-toon")),
+  licenses := List(
+    "MIT" -> url("https://github.com/riccardomerolla/zio-toon/blob/main/LICENSE")
+  ),
+  developers := List(
+    Developer(
+      id = "riccardomerolla",
+      name = "Riccardo Merolla",
+      email = "riccardo.merolla@gmail.com",
+      url = url("https://github.com/riccardomerolla")
+    )
+  )
+))
+
 ThisBuild / scmInfo := Some(
   ScmInfo(
     url("https://github.com/riccardomerolla/zio-toon"),
     "scm:git@github.com:riccardomerolla/zio-toon.git"
   )
 )
-
-ThisBuild / developers := List(
-  Developer(
-    id = "riccardomerolla",
-    name = "Riccardo Merolla",
-    email = "riccardo.merolla@gmail.com",
-    url = url("https://github.com/riccardomerolla")
-  )
-)
-
-ThisBuild / licenses := List(
-  "MIT" -> url("https://github.com/riccardomerolla/zio-toon/blob/main/LICENSE")
-)
-
-ThisBuild / homepage := Some(url("https://github.com/riccardomerolla/zio-toon"))
 
 // Remove any "SNAPSHOT" in the version for proper Sonatype releases
 ThisBuild / versionScheme := Some("early-semver")
