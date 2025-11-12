@@ -81,6 +81,11 @@ The CI workflow:
 
 ## Troubleshooting
 
+### "sbt: command not found" in GitHub Actions
+- The workflow uses `sbt/setup-sbt@v1` action to install sbt
+- Ensure this step is present in your workflow before any sbt commands
+- If using a custom workflow, add the setup-sbt action after setup-java
+
 ### Publishing fails with "unauthorized"
 - Verify your `SONATYPE_USERNAME` and `SONATYPE_PASSWORD` secrets are correct
 - Ensure your Sonatype account is active and verified

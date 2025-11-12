@@ -59,6 +59,7 @@ Already configured (if you followed the issue):
 
 | Problem | Solution |
 |---------|----------|
+| `sbt: command not found` | Workflow updated with `sbt/setup-sbt@v1` action |
 | Publishing fails | Check GitHub Secrets are correct |
 | Signing fails | Verify PGP_SECRET is base64 encoded |
 | Tests fail | Run `sbt test` locally first |

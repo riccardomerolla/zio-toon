@@ -13,6 +13,7 @@ This document summarizes all the changes made to enable automated publishing to 
 - Runs tests on every push to `main` and on pull requests
 - Tests against Java 11, 17, and 21
 - Checks code formatting with scalafmt
+- Uses `sbt/setup-sbt@v1` action to ensure sbt is available
 - Publishes to Maven Central automatically when a version tag (e.g., `v0.1.0`) is pushed
 - Uses GitHub Secrets for secure credential management
 
