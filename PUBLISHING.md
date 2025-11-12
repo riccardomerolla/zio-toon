@@ -106,6 +106,19 @@ The CI workflow:
 - Update the `PGP_SECRET` secret in GitHub with this value
 - The secret should contain no spaces, no line breaks, just the base64 string
 
+### "Repository for publishing is not specified"
+- This means `publishTo` is not configured in build.sbt
+- Ensure you have the Sonatype configuration:
+  ```scala
+  ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+  ThisBuild / publishTo := {
+    val nexus = "https://s01.oss.sonatype.org/"
+    if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
+    else Some("releases" at nexus + "service/local/staging/deploy/maven2")
+  }
+  ```
+- This configuration is already included in the project
+
 ### Publishing fails with "unauthorized"
 - Verify your `SONATYPE_USERNAME` and `SONATYPE_PASSWORD` secrets are correct
 - Ensure your Sonatype account is active and verified

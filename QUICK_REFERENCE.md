@@ -61,6 +61,7 @@ Already configured (if you followed the issue):
 |---------|----------|
 | `sbt: command not found` | Workflow updated with `sbt/setup-sbt@v1` action |
 | `base64: invalid input` | Re-encode PGP key: `gpg --armor --export-secret-keys YOUR_EMAIL | base64 -w 0` (single line, no breaks) |
+| `Repository for publishing is not specified` | Added Sonatype configuration to build.sbt (already fixed) |
 | Publishing fails | Check GitHub Secrets are correct |
 | Signing fails | Verify PGP_SECRET is base64 encoded |
 | Tests fail | Run `sbt test` locally first |
