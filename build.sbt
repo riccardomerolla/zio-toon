@@ -6,8 +6,8 @@ ThisBuild / organizationHomepage := Some(url("https://github.com/riccardomerolla
 inThisBuild(List(
   organization := "io.github.riccardomerolla",
   homepage := Some(url("https://github.com/riccardomerolla/zio-toon")),
-  licenses := List(
-    "MIT" -> url("https://github.com/riccardomerolla/zio-toon/blob/main/LICENSE")
+  licenses := Seq(
+    "MIT" -> url("https://opensource.org/license/mit")
   ),
   developers := List(
     Developer(
@@ -16,18 +16,15 @@ inThisBuild(List(
       email = "riccardo.merolla@gmail.com",
       url = url("https://github.com/riccardomerolla")
     )
-  )
+  ),
+  scmInfo := Some(
+    ScmInfo(
+      url("https://github.com/riccardomerolla/zio-toon"),
+      "scm:git@github.com:riccardomerolla/zio-toon.git"
+    )
+  ),
+  versionScheme := Some("early-semver")
 ))
-
-ThisBuild / scmInfo := Some(
-  ScmInfo(
-    url("https://github.com/riccardomerolla/zio-toon"),
-    "scm:git@github.com:riccardomerolla/zio-toon.git"
-  )
-)
-
-// Remove any "SNAPSHOT" in the version for proper Sonatype releases
-ThisBuild / versionScheme := Some("early-semver")
 
 lazy val root = (project in file("."))
   .settings(
