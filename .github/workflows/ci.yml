@@ -14,10 +14,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        java: [ '11', '17', '21' ]
-        scala: [ '3.3.1' ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +24,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: ${{ matrix.java }}
+          java-version: '21'
           cache: 'sbt'
 
       - name: Setup SBT
@@ -54,7 +50,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '21'
           cache: 'sbt'
 
       - name: Setup SBT

@@ -22,12 +22,22 @@ Ensure the following secrets are configured in your GitHub repository settings (
 
 ### How to encode your PGP key
 
+**IMPORTANT**: The key must be base64 encoded in a **single line** without line breaks.
+
 ```bash
-# Export your private key and encode it
-gpg --armor --export-secret-keys YOUR_EMAIL@example.com | base64 | pbcopy
+# On macOS/Linux - Export and encode WITHOUT line breaks
+gpg --armor --export-secret-keys YOUR_EMAIL@example.com | base64 -w 0 | pbcopy
+
+# Alternative if -w 0 doesn't work (macOS)
+gpg --armor --export-secret-keys YOUR_EMAIL@example.com | base64 | tr -d '\n' | pbcopy
+
+# On Windows (PowerShell)
+gpg --armor --export-secret-keys YOUR_EMAIL@example.com | Out-String | [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_)) | Set-Clipboard
 ```
 
 Then paste the result as the `PGP_SECRET` secret in GitHub.
+
+**Verification**: The secret should be one long continuous string with no spaces or line breaks.
 
 ## How to Release
 
@@ -85,6 +95,16 @@ The CI workflow:
 - The workflow uses `sbt/setup-sbt@v1` action to install sbt
 - Ensure this step is present in your workflow before any sbt commands
 - If using a custom workflow, add the setup-sbt action after setup-java
+
+### "base64: invalid input" error during signing
+- Your `PGP_SECRET` is not properly base64 encoded
+- Re-encode your PGP key ensuring it's a **single line without line breaks**:
+  ```bash
+  gpg --armor --export-secret-keys YOUR_EMAIL@example.com | base64 -w 0
+  ```
+- Copy the entire output (should be one very long line)
+- Update the `PGP_SECRET` secret in GitHub with this value
+- The secret should contain no spaces, no line breaks, just the base64 string
 
 ### Publishing fails with "unauthorized"
 - Verify your `SONATYPE_USERNAME` and `SONATYPE_PASSWORD` secrets are correct
