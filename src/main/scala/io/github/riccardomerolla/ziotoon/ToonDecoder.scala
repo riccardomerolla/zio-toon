@@ -18,9 +18,19 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
 
   import StringUtils._
 
+  // Regex pattern for array headers - defined once for reuse
+  private val ArrayHeaderPattern = """^(.+?)\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
+
   /** Line with metadata for parsing.
     */
   private case class Line(content: String, depth: Int, lineNumber: Int, indent: Int)
+
+  /** Unquote a key if it's quoted, handling escape sequences. Pure helper function to reduce duplication.
+    */
+  private def unquoteKey(key: String, lineNumber: Int): Either[ToonError, String] =
+    if (key.startsWith("\"") && key.endsWith("\""))
+      unescape(key.substring(1, key.length - 1)).left.map(msg => InvalidEscape(msg, lineNumber))
+    else Right(key)
 
   /** Decode a TOON format string into a ToonValue.
     *
@@ -35,30 +45,28 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
                   else decodeRoot(lines)
       } yield result
 
-  /** Decode the root value based on the first line structure. Pure function using pattern matching.
+  /** Decode the root value based on the first line structure. Pure function using pattern matching with guards.
     */
   private def decodeRoot(lines: Chunk[Line]): Either[ToonError, ToonValue] = {
     val firstLine = lines.head
     val content   = firstLine.content
 
-    if (content.matches("^.+\\[\\d+.*\\]:.*") && content.contains("[")) {
-      // Object with array field at root
-      val (result, _) = parseObject(lines, 0)
-      result
-    }
-    else if (content.matches("^\\[\\d+.*\\]:.*")) {
-      // Array at root without key
-      val (result, _) = parseArray(lines, 0, None)
-      result
-    }
-    else if (content.contains(":")) {
-      // Object at root
-      val (result, _) = parseObject(lines, 0)
-      result
-    }
-    else {
+    content match {
+      // Object with array field at root: "key[N]: ..."
+      case c if c.matches("^.+\\[\\d+.*\\]:.*") && c.contains("[") =>
+        parseObject(lines, 0)._1
+
+      // Array at root without key: "[N]: ..."
+      case c if c.matches("^\\[\\d+.*\\]:.*") =>
+        parseArray(lines, 0, None)._1
+
+      // Object at root: "key: ..."
+      case c if c.contains(":") =>
+        parseObject(lines, 0)._1
+
       // Single primitive value
-      parsePrimitive(firstLine.content, firstLine.lineNumber)
+      case _ =>
+        parsePrimitive(firstLine.content, firstLine.lineNumber)
     }
   }
 
@@ -100,46 +108,29 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       .map(Chunk.fromIterable)
   }
 
-  /** Parse a primitive value from a string.
+  /** Parse a primitive value from a string. Pure function using pattern matching and Either composition.
     */
   private def parsePrimitive(s: String, lineNumber: Int): Either[ToonError, Primitive] = {
     val trimmed = s.trim
 
-    // Check for quoted string
-    if (trimmed.startsWith("\"")) {
-      if (!trimmed.endsWith("\"") || trimmed.length < 2) {
-        return Left(UnterminatedString(lineNumber))
-      }
-      val content = trimmed.substring(1, trimmed.length - 1)
-      unescape(content) match {
-        case Left(msg)        => Left(InvalidEscape(msg, lineNumber))
-        case Right(unescaped) => Right(Str(unescaped))
-      }
-    }
-    // Check for null
-    else if (trimmed == "null") {
-      Right(Null)
-    }
-    // Check for boolean
-    else if (trimmed == "true") {
-      Right(Bool(true))
-    }
-    else if (trimmed == "false") {
-      Right(Bool(false))
-    }
-    // Check for number
-    else if (trimmed.matches("^-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$")) {
-      try {
-        val num = trimmed.toDouble
-        Right(Num(num))
-      }
-      catch {
-        case _: NumberFormatException => Right(Str(trimmed))
-      }
-    }
-    // Otherwise it's an unquoted string
-    else {
-      Right(Str(trimmed))
+    trimmed match {
+      case quoted if quoted.startsWith("\"") =>
+        if (!quoted.endsWith("\"") || quoted.length < 2) Left(UnterminatedString(lineNumber))
+        else
+          unescape(quoted.substring(1, quoted.length - 1))
+            .left
+            .map(msg => InvalidEscape(msg, lineNumber))
+            .map(Str.apply)
+
+      case "null"  => Right(Null)
+      case "true"  => Right(Bool(true))
+      case "false" => Right(Bool(false))
+
+      case numeric if numeric.matches("^-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$") =>
+        scala.util.Try(numeric.toDouble).toOption.map(Num.apply).getOrElse(Str(numeric))
+        Right(Num(numeric.toDouble))
+
+      case other => Right(Str(other))
     }
   }
 
@@ -179,7 +170,8 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     loop(startIdx, List.empty)
   }
 
-  /** Process a single object line and return new fields and lines consumed. Pure helper function.
+  /** Process a single object line and return new fields and lines consumed. Extracted method with clear responsibility:
+    * validate and route to field parser.
     */
   private def processObjectLine(
       lines: Chunk[Line],
@@ -187,25 +179,29 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       depth: Int,
       currentFields: List[(String, ToonValue)],
     ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
-    val line     = lines(idx)
-    val content  = line.content
-    val colonIdx = findUnquotedColon(content)
+    val line = lines(idx)
+
+    for {
+      colonIdx <- validateAndFindColon(line)
+      result   <- parseObjectField(lines, idx, depth, line.content, colonIdx)
+    } yield result
+  }
+
+  /** Validate line has a colon and find its position. Extracted validation logic with clear responsibility.
+    */
+  private def validateAndFindColon(line: Line): Either[ToonError, Int] = {
+    val colonIdx = findUnquotedColon(line.content)
 
     if (colonIdx < 0) {
-      if (config.strictMode) {
-        Left(MissingColon(line.lineNumber))
-      }
-      else {
-        // Skip line in non-strict mode
-        Right((List.empty, 1))
-      }
+      if (config.strictMode) Left(MissingColon(line.lineNumber))
+      else Right(-1) // Signal to skip in non-strict mode
     }
     else {
-      parseObjectField(lines, idx, depth, content, colonIdx)
+      Right(colonIdx)
     }
   }
 
-  /** Parse an object field (key-value pair). Pure function that handles all field types.
+  /** Parse an object field (key-value pair). Pure function that routes to array or simple field parser.
     */
   private def parseObjectField(
       lines: Chunk[Line],
@@ -214,10 +210,13 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       content: String,
       colonIdx: Int,
     ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
-    val line = lines(idx)
+    // Skip line in non-strict mode when no colon found
+    if (colonIdx < 0) {
+      return Right((List.empty, 1))
+    }
 
-    // Check if this is an array header
-    if (content.matches("^.+?\\[\\d+[|\\t]?\\](?:\\{.+?\\})?:.*")) {
+    // Route to appropriate parser based on content type
+    if (isArrayFieldHeader(content)) {
       parseArrayField(lines, idx, depth, content)
     }
     else {
@@ -225,7 +224,12 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
   }
 
-  /** Parse a simple key-value field. Pure function.
+  /** Check if content is an array field header. Extracted predicate for clarity.
+    */
+  private def isArrayFieldHeader(content: String): Boolean =
+    content.matches("^.+?\\[\\d+[|\\t]?\\](?:\\{.+?\\})?:.*")
+
+  /** Parse a simple key-value field. Pure function with single responsibility: parse key and route to value parser.
     */
   private def parseSimpleField(
       lines: Chunk[Line],
@@ -234,46 +238,105 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       content: String,
       colonIdx: Int,
     ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
-    val line = lines(idx)
-    val key  = content.substring(0, colonIdx).trim
-
-    val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-      unescape(key.substring(1, key.length - 1)) match {
-        case Left(msg) => return Left(InvalidEscape(msg, line.lineNumber))
-        case Right(k)  => k
-      }
-    }
-    else key
-
+    val line     = lines(idx)
+    val key      = content.substring(0, colonIdx).trim
     val valueStr = content.substring(colonIdx + 1).trim
 
-    if (valueStr.isEmpty) {
-      // Check for nested content
-      if (idx + 1 < lines.length && lines(idx + 1).depth == depth + 1) {
-        val nextLine = lines(idx + 1)
-        if (nextLine.content.startsWith("-") || nextLine.content.matches("^\\[\\d+.*\\]:?.*")) {
-          // Nested array
-          val (result, consumed) = parseArray(lines, idx + 1, Some(unquotedKey))
-          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
-        }
-        else {
-          // Nested object
-          val (result, consumed) = parseObject(lines, idx + 1)
-          result.map(obj => (List((unquotedKey, obj)), consumed + 1))
-        }
-      }
-      else {
-        // Empty object
-        Right((List((unquotedKey, Obj.empty)), 1))
-      }
+    for {
+      unquotedKey <- unquoteKey(key, line.lineNumber)
+      result      <- parseFieldValue(lines, idx, depth, unquotedKey, valueStr, line.lineNumber)
+    } yield result
+  }
+
+  /** Parse the value part of a field (inline primitive or nested structure). Extracted method with clear
+    * responsibility: route to appropriate value parser.
+    */
+  private def parseFieldValue(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      key: String,
+      valueStr: String,
+      lineNumber: Int,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] =
+    if (valueStr.nonEmpty)
+      parseInlineFieldValue(key, valueStr, lineNumber)
+    else
+      parseNestedOrEmptyValue(lines, idx, depth, key)
+
+  /** Parse an inline primitive value. Single responsibility: handle inline values.
+    */
+  private def parseInlineFieldValue(
+      key: String,
+      valueStr: String,
+      lineNumber: Int,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] =
+    parsePrimitive(valueStr, lineNumber).map(prim => (List((key, prim)), 1))
+
+  /** Parse nested structure or empty value. Improved name and reduced nesting with early return for empty case.
+    */
+  private def parseNestedOrEmptyValue(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      key: String,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    // No nested content - empty object
+    if (idx + 1 >= lines.length || lines(idx + 1).depth != depth + 1) {
+      return Right((List((key, Obj.empty)), 1))
+    }
+
+    // Has nested content - determine type and parse
+    parseNestedValue(lines, idx, depth, key)
+  }
+
+  /** Parse nested value (array or object). Extracted method with single responsibility: identify and parse nested
+    * structures.
+    */
+  private def parseNestedValue(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      key: String,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val nextLine = lines(idx + 1)
+
+    if (isArrayContent(nextLine)) {
+      parseNestedArray(lines, idx, key)
     }
     else {
-      // Inline primitive value
-      parsePrimitive(valueStr, line.lineNumber).map(prim => (List((unquotedKey, prim)), 1))
+      parseNestedObject(lines, idx, key)
     }
   }
 
-  /** Parse an array field from object. Pure function extracting array parsing logic.
+  /** Check if line content indicates an array. Extracted predicate for clarity.
+    */
+  private def isArrayContent(line: Line): Boolean =
+    line.content.startsWith("-") || line.content.matches("^\\[\\d+.*\\]:?.*")
+
+  /** Parse nested array. Single responsibility: handle nested array case.
+    */
+  private def parseNestedArray(
+      lines: Chunk[Line],
+      idx: Int,
+      key: String,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val (result, consumed) = parseArray(lines, idx + 1, Some(key))
+    result.map(arr => (List((key, arr)), consumed + 1))
+  }
+
+  /** Parse nested object. Single responsibility: handle nested object case.
+    */
+  private def parseNestedObject(
+      lines: Chunk[Line],
+      idx: Int,
+      key: String,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val (result, consumed) = parseObject(lines, idx + 1)
+    result.map(obj => (List((key, obj)), consumed + 1))
+  }
+
+  /** Parse an array field from object. Pure function using pattern matching and for-comprehension.
     */
   private def parseArrayField(
       lines: Chunk[Line],
@@ -281,50 +344,61 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       depth: Int,
       content: String,
     ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
-    val line        = lines(idx)
-    val headerMatch = """^(.+?)\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
+    val line = lines(idx)
 
     content match {
-      case headerMatch(keyPart, lengthStr, delimSymbol, fieldList, values) =>
-        val key         = keyPart.trim
-        val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-          unescape(key.substring(1, key.length - 1)) match {
-            case Left(msg) => return Left(InvalidEscape(msg, line.lineNumber))
-            case Right(k)  => k
-          }
-        }
-        else key
+      case ArrayHeaderPattern(keyPart, lengthStr, delimSymbol, fieldList, values) =>
+        for {
+          unquotedKey <- unquoteKey(keyPart.trim, line.lineNumber)
+          delimiter    = parseDelimiter(delimSymbol)
+          length       = lengthStr.toInt
+          result      <-
+            parseArrayContent(lines, idx, depth, unquotedKey, length, delimiter, fieldList, values, line.lineNumber)
+        } yield result
 
-        val length    = lengthStr.toInt
-        val delimiter =
-          if (delimSymbol == "\t") Delimiter.Tab
-          else if (delimSymbol == "|") Delimiter.Pipe
-          else Delimiter.Comma
-
-        if (values.nonEmpty) {
-          // Inline array
-          parseInlineArrayValues(values, delimiter, length, line.lineNumber)
-            .map(arr => (List((unquotedKey, arr)), 1))
-        }
-        else if (fieldList != null && fieldList.nonEmpty) {
-          // Tabular array
-          val (result, consumed) = parseTabularArray(lines, idx + 1, length, fieldList, delimiter, depth)
-          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
-        }
-        else if (length == 0) {
-          // Empty array
-          Right((List((unquotedKey, Arr.empty)), 1))
-        }
-        else {
-          // List array
-          val (result, consumed) = parseListArray(lines, idx + 1, length, depth)
-          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
-        }
-
-      case _ =>
-        Left(ParseError(s"Invalid array header at line ${line.lineNumber}"))
+      case _ => Left(ParseError(s"Invalid array header at line ${line.lineNumber}"))
     }
   }
+
+  /** Parse delimiter symbol. Pure helper function.
+    */
+  private def parseDelimiter(delimSymbol: String): Delimiter =
+    if (delimSymbol == "\t") Delimiter.Tab
+    else if (delimSymbol == "|") Delimiter.Pipe
+    else Delimiter.Comma
+
+  /** Parse array content based on format. Pure function routing to specific array parsers.
+    */
+  private def parseArrayContent(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      key: String,
+      length: Int,
+      delimiter: Delimiter,
+      fieldList: String,
+      values: String,
+      lineNumber: Int,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] =
+    if (values.nonEmpty) {
+      // Inline array
+      parseInlineArrayValues(values, delimiter, length, lineNumber)
+        .map(arr => (List((key, arr)), 1))
+    }
+    else if (fieldList != null && fieldList.nonEmpty) {
+      // Tabular array
+      val (result, consumed) = parseTabularArray(lines, idx + 1, length, fieldList, delimiter, depth)
+      result.map(arr => (List((key, arr)), consumed + 1))
+    }
+    else if (length == 0) {
+      // Empty array
+      Right((List((key, Arr.empty)), 1))
+    }
+    else {
+      // List array
+      val (result, consumed) = parseListArray(lines, idx + 1, length, depth)
+      result.map(arr => (List((key, arr)), consumed + 1))
+    }
 
   /** Find the index of an unquoted colon in a string. Pure tail-recursive function.
     */
@@ -382,119 +456,167 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
   }
 
-  /** Parse an array from lines.
+  /** Parse an array from root or nested context. Pure function using pattern matching.
     */
-  private def parseArray(lines: Chunk[Line], startIdx: Int, keyOpt: Option[String]): (Either[ToonError, Arr], Int) = {
+  private def parseArray(
+      lines: Chunk[Line],
+      startIdx: Int,
+      keyOpt: Option[String],
+    ): (Either[ToonError, Arr], Int) = {
     val line    = lines(startIdx)
     val content = line.content
 
-    // Extract array header
-    val headerMatch = """^(?:(.+?))?\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
-    content match {
-      case headerMatch(key, lengthStr, delimSymbol, fieldList, values) =>
-        val length    = lengthStr.toInt
-        val delimiter =
-          if (delimSymbol == "\t") Delimiter.Tab
-          else if (delimSymbol == "|") Delimiter.Pipe
-          else Delimiter.Comma
+    // Pattern for arrays with optional key
+    val ArrayPattern = """^(?:(.+?))?\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
 
-        if (values.nonEmpty) {
-          // Inline array
-          parseInlineArrayValues(values, delimiter, length, line.lineNumber)
-            .map { arr =>
-              (Right(arr), 1)
-            }
-            .getOrElse((Left(ParseError(s"Failed to parse inline array at line ${line.lineNumber}")), 1))
-        }
-        else if (fieldList != null && fieldList.nonEmpty) {
-          // Tabular array
-          parseTabularArray(lines, startIdx + 1, length, fieldList, delimiter, line.depth)
-        }
-        else {
-          // List array
-          parseListArray(lines, startIdx + 1, length, line.depth)
-        }
+    content match {
+      case ArrayPattern(key, lengthStr, delimSymbol, fieldList, values) =>
+        val length    = lengthStr.toInt
+        val delimiter = parseDelimiter(delimSymbol)
+
+        parseArrayByFormat(lines, startIdx, length, delimiter, fieldList, values, line)
 
       case _ =>
         (Left(ParseError(s"Invalid array header at line ${line.lineNumber}")), 1)
     }
   }
 
-  /** Parse array content (used when nested).
+  /** Route to the appropriate array parser based on format. Pure helper function.
     */
-  private def parseArrayContent(lines: Chunk[Line], startIdx: Int, expectedDepth: Int)
-      : (Either[ToonError, Arr], Int) = {
-    // This is a simplified version - would need more logic for full support
-    val firstLine = lines(startIdx)
-    if (firstLine.content.startsWith("-")) {
-      // List array - count items
-      var idx   = startIdx
-      val items = scala.collection.mutable.ArrayBuffer[ToonValue]()
-
-      while (idx < lines.length && lines(idx).depth >= expectedDepth) {
-        val line = lines(idx)
-        if (line.depth == expectedDepth && line.content.startsWith("-")) {
-          val content = line.content.substring(1).trim
-          parsePrimitive(content, line.lineNumber) match {
-            case Left(err)   => return (Left(err), idx - startIdx)
-            case Right(prim) => items += prim
-          }
-        }
-        idx += 1
-      }
-
-      (Right(Arr(Chunk.fromIterable(items))), idx - startIdx)
+  private def parseArrayByFormat(
+      lines: Chunk[Line],
+      startIdx: Int,
+      length: Int,
+      delimiter: Delimiter,
+      fieldList: String,
+      values: String,
+      line: Line,
+    ): (Either[ToonError, Arr], Int) =
+    if (values.nonEmpty) {
+      // Inline array
+      val result = parseInlineArrayValues(values, delimiter, length, line.lineNumber)
+      (result, 1)
+    }
+    else if (fieldList != null && fieldList.nonEmpty) {
+      // Tabular array
+      parseTabularArray(lines, startIdx + 1, length, fieldList, delimiter, line.depth)
     }
     else {
-      (Left(ParseError(s"Unsupported array format at line ${firstLine.lineNumber}")), 0)
+      // List array
+      parseListArray(lines, startIdx + 1, length, line.depth)
     }
-  }
 
-  /** Parse inline array values.
+  /** Parse array content (used when nested). Pure tail-recursive function.
     */
-  private def parseInlineArray(content: String, lineNumber: Int): Either[ToonError, Arr] = {
-    val headerMatch = """^\[(\d+)([|\t]?)\]:\s*(.*)$""".r
-    content match {
-      case headerMatch(lengthStr, delimSymbol, values) =>
-        val length    = lengthStr.toInt
-        val delimiter =
-          if (delimSymbol == "\t") Delimiter.Tab
-          else if (delimSymbol == "|") Delimiter.Pipe
-          else Delimiter.Comma
+  private def parseArrayContent(
+      lines: Chunk[Line],
+      startIdx: Int,
+      expectedDepth: Int,
+    ): (Either[ToonError, Arr], Int) =
+    if (startIdx >= lines.length) {
+      (Right(Arr.empty), 0)
+    }
+    else {
+      val firstLine = lines(startIdx)
+      if (firstLine.content.startsWith("-")) {
+        // List array - parse items recursively
+        @scala.annotation.tailrec
+        def loop(idx: Int, items: List[ToonValue]): (Either[ToonError, List[ToonValue]], Int) =
+          if (idx >= lines.length || lines(idx).depth < expectedDepth) {
+            (Right(items), idx - startIdx)
+          }
+          else if (lines(idx).depth == expectedDepth && lines(idx).content.startsWith("-")) {
+            val content = lines(idx).content.substring(1).trim
+            parsePrimitive(content, lines(idx).lineNumber) match {
+              case Left(err)   => (Left(err), idx - startIdx)
+              case Right(prim) => loop(idx + 1, items :+ prim)
+            }
+          }
+          else {
+            loop(idx + 1, items)
+          }
+
+        val (result, consumed) = loop(startIdx, List.empty)
+        (result.map(items => Arr(Chunk.fromIterable(items))), consumed)
+      }
+      else {
+        (Left(ParseError(s"Unsupported array format at line ${firstLine.lineNumber}")), 0)
+      }
+    }
+
+  /** Parse inline array. Simplified with extracted header parsing and helper reuse.
+    */
+  private def parseInlineArray(content: String, lineNumber: Int): Either[ToonError, Arr] =
+    parseInlineArrayHeader(content, lineNumber).flatMap {
+      case (length, delimiter, values) =>
         parseInlineArrayValues(values, delimiter, length, lineNumber)
+    }
+
+  /** Parse inline array header. Extracted method for header parsing logic.
+    */
+  private def parseInlineArrayHeader(
+      content: String,
+      lineNumber: Int,
+    ): Either[ToonError, (Int, Delimiter, String)] = {
+    val headerPattern = """^\[(\d+)([|\t]?)\]:\s*(.*)$""".r
+
+    content match {
+      case headerPattern(lengthStr, delimSymbol, values) =>
+        val length    = lengthStr.toInt
+        val delimiter = parseDelimiter(delimSymbol)
+        Right((length, delimiter, values))
 
       case _ =>
         Left(ParseError(s"Invalid inline array format at line $lineNumber"))
     }
   }
 
-  /** Parse inline array values. Pure function using foldLeft instead of mutable state.
+  /** Parse inline array values. Pure function with extracted validation.
     */
   private def parseInlineArrayValues(
       values: String,
       delimiter: Delimiter,
       expectedLength: Int,
       lineNumber: Int,
-    ): Either[ToonError, Arr] =
+    ): Either[ToonError, Arr] = {
+    // Handle empty array case early
     if (values.isEmpty && expectedLength == 0) {
-      Right(Arr.empty)
+      return Right(Arr.empty)
+    }
+
+    val split = splitByDelimiter(values, delimiter.char)
+
+    for {
+      _          <- validateArrayLength(split.length, expectedLength, "inline array", lineNumber)
+      primitives <- parseArrayPrimitives(split, lineNumber)
+    } yield Arr(Chunk.fromIterable(primitives))
+  }
+
+  /** Validate array length matches expected length in strict mode. Extracted validation logic.
+    */
+  private def validateArrayLength(
+      actualLength: Int,
+      expectedLength: Int,
+      arrayType: String,
+      lineNumber: Int,
+    ): Either[ToonError, Unit] =
+    if (config.strictMode && actualLength != expectedLength) {
+      Left(CountMismatch(expectedLength, actualLength, arrayType, lineNumber))
     }
     else {
-      val split = splitByDelimiter(values, delimiter.char)
+      Right(())
+    }
 
-      if (config.strictMode && split.length != expectedLength) {
-        Left(CountMismatch(expectedLength, split.length, "inline array", lineNumber))
-      }
-      else {
-        // Use foldLeft to accumulate Either values
-        split
-          .foldLeft[Either[ToonError, List[Primitive]]](Right(List.empty)) {
-            case (Left(error), _)    => Left(error)
-            case (Right(acc), value) =>
-              parsePrimitive(value.trim, lineNumber).map(prim => acc :+ prim)
-          }
-          .map(prims => Arr(Chunk.fromIterable(prims)))
-      }
+  /** Parse array of primitive values. Extracted parsing logic using foldLeft.
+    */
+  private def parseArrayPrimitives(
+      values: Array[String],
+      lineNumber: Int,
+    ): Either[ToonError, List[Primitive]] =
+    values.foldLeft[Either[ToonError, List[Primitive]]](Right(List.empty)) {
+      case (Left(error), _)    => Left(error)
+      case (Right(acc), value) =>
+        parsePrimitive(value.trim, lineNumber).map(prim => acc :+ prim)
     }
 
   /** Parse tabular array. Pure functional implementation using foldLeft and recursion.
@@ -617,7 +739,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
   }
 
-  /** Parse a single list item. Pure helper function.
+  /** Parse a single list item. Pure function using for-comprehension.
     */
   private def parseListItem(
       lines: Chunk[Line],
@@ -634,34 +756,36 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     else {
       val colonIdx = findUnquotedColon(content)
       if (colonIdx < 0) {
-        // Simple primitive
         parsePrimitive(content, line.lineNumber).map(prim => (prim, 1))
       }
       else {
-        val key      = content.substring(0, colonIdx).trim
-        val valueStr = content.substring(colonIdx + 1).trim
-
-        if (valueStr.isEmpty) {
-          // Nested structure
-          val (result, consumed) = parseObject(lines, idx + 1)
-          result.map(obj => (obj, consumed + 1))
-        }
-        else {
-          // Simple field
-          for {
-            prim        <- parsePrimitive(valueStr, line.lineNumber)
-            unquotedKey <- if (key.startsWith("\"") && key.endsWith("\"")) {
-                             unescape(key.substring(1, key.length - 1))
-                               .left
-                               .map(msg => InvalidEscape(msg, line.lineNumber))
-                           }
-                           else {
-                             Right(key)
-                           }
-          } yield (Obj((unquotedKey, prim)), 1)
-        }
+        parseListItemWithField(lines, idx, content, colonIdx, line.lineNumber)
       }
     }
+  }
+
+  /** Parse a list item with a field (key: value). Helper to reduce complexity and use unquoteKey helper.
+    */
+  private def parseListItemWithField(
+      lines: Chunk[Line],
+      idx: Int,
+      content: String,
+      colonIdx: Int,
+      lineNumber: Int,
+    ): Either[ToonError, (ToonValue, Int)] = {
+    val key      = content.substring(0, colonIdx).trim
+    val valueStr = content.substring(colonIdx + 1).trim
+
+    for {
+      unquotedKey <- unquoteKey(key, lineNumber)
+      result      <- if (valueStr.isEmpty) {
+                       val (objResult, consumed) = parseObject(lines, idx + 1)
+                       objResult.map(obj => (obj, consumed + 1))
+                     }
+                     else {
+                       parsePrimitive(valueStr, lineNumber).map(prim => (Obj((unquotedKey, prim)), 1))
+                     }
+    } yield result
   }
 
   /** Split a string by delimiter, respecting quoted strings. Pure functional implementation using tail recursion.
