@@ -1,10 +1,37 @@
-ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / scalaVersion := "3.3.1"
 ThisBuild / organization := "io.github.riccardomerolla"
+ThisBuild / organizationName := "Riccardo Merolla"
+ThisBuild / organizationHomepage := Some(url("https://github.com/riccardomerolla"))
+
+ThisBuild / scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/riccardomerolla/zio-toon"),
+    "scm:git@github.com:riccardomerolla/zio-toon.git"
+  )
+)
+
+ThisBuild / developers := List(
+  Developer(
+    id = "riccardomerolla",
+    name = "Riccardo Merolla",
+    email = "riccardo.merolla@gmail.com",
+    url = url("https://github.com/riccardomerolla")
+  )
+)
+
+ThisBuild / licenses := List(
+  "MIT" -> url("https://github.com/riccardomerolla/zio-toon/blob/main/LICENSE")
+)
+
+ThisBuild / homepage := Some(url("https://github.com/riccardomerolla/zio-toon"))
+
+// Remove any "SNAPSHOT" in the version for proper Sonatype releases
+ThisBuild / versionScheme := Some("early-semver")
 
 lazy val root = (project in file("."))
   .settings(
     name := "zio-toon",
+    description := "A Scala 3 / ZIO 2.x implementation of TOON (Token-Oriented Object Notation), a compact serialization format optimized to reduce token usage when interacting with LLMs",
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.1.22",
       "dev.zio" %% "zio-streams" % "2.1.22",
@@ -24,6 +51,7 @@ lazy val benchmarks = (project in file("benchmarks"))
   .dependsOn(root)
   .settings(
     name := "zio-toon-benchmarks",
+    publish / skip := true,
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.1.22"
     )
