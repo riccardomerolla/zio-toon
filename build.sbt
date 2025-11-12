@@ -28,15 +28,6 @@ ThisBuild / homepage := Some(url("https://github.com/riccardomerolla/zio-toon"))
 // Remove any "SNAPSHOT" in the version for proper Sonatype releases
 ThisBuild / versionScheme := Some("early-semver")
 
-// Sonatype publishing configuration for Sonatype Central (s01)
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / publishTo := {
-  val nexus = "https://s01.oss.sonatype.org/"
-  if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
-  else Some("releases" at nexus + "service/local/staging/deploy/maven2")
-}
-ThisBuild / publishMavenStyle := true
-
 lazy val root = (project in file("."))
   .settings(
     name := "zio-toon",
