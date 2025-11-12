@@ -14,7 +14,58 @@ import zio.json.ast.Json
  * - Automatic derivation from case classes
  * 
  * Uses zio-schema-json as a bridge for conversion.
- * Follows ZIO best practices with typed errors and effect composition.
+ * 
+ * Following ZIO best practices:
+ * - Effects are pure blueprints
+ * - Errors are typed as String in error channel
+ * - Service is provided via ZLayer with dependencies
+ * - Effects compose through for-comprehension
+ * 
+ * ==Usage==
+ * 
+ * {{{
+ * import zio.schema._
+ * 
+ * case class Person(name: String, age: Int)
+ * 
+ * object Person {
+ *   given Schema[Person] = DeriveSchema.gen[Person]
+ * }
+ * 
+ * val program = for {
+ *   person <- ZIO.succeed(Person("Alice", 30))
+ *   toonString <- ToonSchemaService.encode(person)
+ *   decoded <- ToonSchemaService.decode[Person](toonString)
+ *   _ <- Console.printLine(s"Round-trip: $decoded")
+ * } yield decoded
+ * 
+ * program.provide(
+ *   ToonSchemaService.live,
+ *   ToonJsonService.live
+ * )
+ * }}}
+ * 
+ * ==Error Handling==
+ * 
+ * Schema encoding/decoding errors are typed as String:
+ * 
+ * {{{
+ * ToonSchemaService.decode[Person](invalidToon).catchAll { error =>
+ *   ZIO.logError(s"Schema decode failed: $error") *>
+ *   ZIO.fail(error)
+ * }
+ * }}}
+ * 
+ * ==Custom Configuration==
+ * 
+ * {{{
+ * val customLayer = ToonSchemaService.configured(
+ *   encoderConfig = EncoderConfig(indentSize = 4),
+ *   decoderConfig = DecoderConfig(strictMode = false)
+ * )
+ * 
+ * program.provide(customLayer, ToonJsonService.live)
+ * }}}
  */
 trait ToonSchemaService {
   

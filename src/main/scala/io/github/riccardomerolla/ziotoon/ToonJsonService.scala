@@ -7,6 +7,8 @@ import zio.json.ast.Json
 /**
  * Result of token savings calculation between JSON and TOON formats.
  * 
+ * This is a pure data type representing comparison statistics.
+ * 
  * @param jsonSize The size of the JSON representation in characters
  * @param toonSize The size of the TOON representation in characters
  * @param savings The absolute difference in characters (jsonSize - toonSize)
@@ -30,7 +32,38 @@ final case class TokenSavings(
  * - Decode JSON string to ToonValue
  * - Calculate token savings between JSON and TOON formats
  * 
- * Follows ZIO best practices with typed errors and effect composition.
+ * Following ZIO best practices:
+ * - Effects are pure blueprints
+ * - Errors are typed in error channel
+ * - Service is provided via ZLayer
+ * - Effects compose naturally
+ * 
+ * ==Usage==
+ * 
+ * {{{
+ * val program = for {
+ *   toonValue <- ToonJsonService.fromJson(jsonString)
+ *   encoded <- ToonEncoderService.encode(toonValue)
+ *   savings <- ToonJsonService.calculateSavings(toonValue)
+ *   _ <- Console.printLine(s"Savings: $savings")
+ * } yield encoded
+ * 
+ * program.provide(
+ *   ToonJsonService.live,
+ *   ToonEncoderService.live
+ * )
+ * }}}
+ * 
+ * ==Error Handling==
+ * 
+ * JSON decoding errors are typed as String in the error channel:
+ * 
+ * {{{
+ * ToonJsonService.fromJson(invalidJson).catchAll { error =>
+ *   ZIO.logWarning(s"JSON parse failed: $error") *>
+ *   ZIO.succeed(ToonValue.Null)
+ * }
+ * }}}
  */
 trait ToonJsonService {
   

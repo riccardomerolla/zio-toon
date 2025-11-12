@@ -5,6 +5,50 @@ import zio.Chunk
 /**
  * Core data model for TOON values, representing the JSON data model
  * as specified in the TOON specification.
+ * 
+ * This is a pure ADT (Algebraic Data Type) following functional programming principles:
+ * - Immutable data structures
+ * - Type-safe representation
+ * - Pattern matching for exhaustive handling
+ * 
+ * ==Overview==
+ * 
+ * TOON values mirror JSON's data model:
+ * - Primitives: String, Number, Boolean, Null
+ * - Containers: Object (ordered key-value pairs), Array (ordered sequence)
+ * 
+ * ==Usage==
+ * 
+ * {{{
+ * import ToonValue._
+ * 
+ * // Create values using helper methods
+ * val person = obj(
+ *   "name" -> str("Alice"),
+ *   "age" -> num(30),
+ *   "active" -> bool(true),
+ *   "email" -> Null
+ * )
+ * 
+ * val tags = arr(str("admin"), str("ops"), str("dev"))
+ * 
+ * // Pattern match for exhaustive handling
+ * person match {
+ *   case Obj(fields) => // handle object
+ *   case Arr(elements) => // handle array
+ *   case Str(s) => // handle string
+ *   case Num(n) => // handle number
+ *   case Bool(b) => // handle boolean
+ *   case Null => // handle null
+ * }
+ * }}}
+ * 
+ * ==Type Safety==
+ * 
+ * The ADT ensures type safety at compile time:
+ * - Invalid constructions are compile errors
+ * - Pattern matching is exhaustive (compiler warns if cases are missing)
+ * - No runtime type casting needed
  */
 sealed trait ToonValue
 

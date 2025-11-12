@@ -3,9 +3,13 @@ package io.github.riccardomerolla.ziotoon
 import ToonValue._
 import ToonError._
 import zio.Chunk
+import scala.util.boundary
+import scala.util.boundary.break
 
 /**
  * Decoder for parsing TOON format strings into ToonValue.
+ *
+ * Uses Scala 3's boundary/break for early returns following modern Scala 3 practices.
  */
 class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
   
@@ -18,60 +22,75 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
   
   /**
    * Decode a TOON format string into a ToonValue.
+   *
+   * Following ZIO best practices: all errors are in the error channel,
+   * no exceptions are thrown.
+   *
+   * Uses Scala 3's boundary/break for clean early exits.
    */
-  def decode(input: String): Either[ToonError, ToonValue] = {
+  def decode(input: String): Either[ToonError, ToonValue] = boundary {
     if (input.trim.isEmpty) {
       // Empty input returns null per spec
-      return Right(Null)
+      break(Right(Null))
     }
     
-    // Parse lines with indentation
-    val lines = parseLines(input)
-    if (lines.isEmpty) {
-      return Right(Null)
-    }
-    
-    // Determine root form
-    val firstLine = lines.head
-    // Check if it's a keyed array (e.g., "users[2]{...}:" or "tags[3]:")
-    if (firstLine.content.matches("^.+\\[\\d+.*\\]:.*") && firstLine.content.contains("[")) {
-      // This is an object with array field at root
-      parseObject(lines, 0)._1
-    } else if (firstLine.content.matches("^\\[\\d+.*\\]:.*")) {
-      // Array at root without key
-      parseArray(lines, 0, None)._1
-    } else if (firstLine.content.contains(":")) {
-      // Object at root
-      parseObject(lines, 0)._1
-    } else {
-      // Single primitive value
-      parsePrimitive(firstLine.content, firstLine.lineNumber)
+    // Parse lines with indentation - handle errors in Either
+    parseLines(input) match {
+      case Left(error) => break(Left(error))
+      case Right(lines) =>
+        if (lines.isEmpty) {
+          break(Right(Null))
+        }
+
+        // Determine root form
+        val firstLine = lines.head
+        // Check if it's a keyed array (e.g., "users[2]{...}:" or "tags[3]:")
+        if (firstLine.content.matches("^.+\\[\\d+.*\\]:.*") && firstLine.content.contains("[")) {
+          // This is an object with array field at root
+          parseObject(lines, 0)._1
+        } else if (firstLine.content.matches("^\\[\\d+.*\\]:.*")) {
+          // Array at root without key
+          parseArray(lines, 0, None)._1
+        } else if (firstLine.content.contains(":")) {
+          // Object at root
+          parseObject(lines, 0)._1
+        } else {
+          // Single primitive value
+          parsePrimitive(firstLine.content, firstLine.lineNumber)
+        }
     }
   }
   
   /**
    * Parse lines with indentation information.
+   * Returns Either to handle indentation errors without throwing.
+   * Uses Scala 3's boundary/break for clean error handling.
    */
-  private def parseLines(input: String): Chunk[Line] = {
+  private def parseLines(input: String): Either[ToonError, Chunk[Line]] = boundary {
     val rawLines = input.split("\n")
-    
-    Chunk.fromIterable(rawLines.zipWithIndex.flatMap { case (line, idx) =>
-      if (line.trim.isEmpty) None // Skip blank lines
-      else {
+    val lines = scala.collection.mutable.ArrayBuffer[Line]()
+
+    var idx = 0
+    while (idx < rawLines.length) {
+      val line = rawLines(idx)
+      if (line.trim.nonEmpty) {
         val indent = line.takeWhile(_ == ' ').length
         val depth = indent / config.indentSize
         
         // Strict mode: check indentation
         if (config.strictMode && indent % config.indentSize != 0) {
-          throw IndentationError(
+          break(Left(IndentationError(
             s"Indentation must be a multiple of ${config.indentSize} spaces",
             idx + 1
-          )
+          )))
         }
         
-        Some(Line(line.trim, depth, idx + 1, indent))
+        lines += Line(line.trim, depth, idx + 1, indent)
       }
-    })
+      idx += 1
+    }
+
+    Right(Chunk.fromIterable(lines))
   }
   
   /**
@@ -429,32 +448,42 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       return Left(CountMismatch(expectedLength, split.length, "inline array", lineNumber))
     }
     
-    val elements = split.map { v =>
-      parsePrimitive(v.trim, lineNumber) match {
+    // Build elements without using lambda-return to avoid non-local returns
+    val elementsBuf = scala.collection.mutable.ArrayBuffer[Primitive]()
+    var i = 0
+    while (i < split.length) {
+      parsePrimitive(split(i).trim, lineNumber) match {
         case Left(err) => return Left(err)
-        case Right(prim) => prim
+        case Right(prim) => elementsBuf += prim
       }
+      i += 1
     }
     
-    Right(Arr(Chunk.fromIterable(elements)))
+    Right(Arr(Chunk.fromIterable(elementsBuf)))
   }
   
   /**
    * Parse tabular array.
    */
   private def parseTabularArray(lines: Chunk[Line], startIdx: Int, expectedLength: Int, fieldList: String, delimiter: Delimiter, headerDepth: Int): (Either[ToonError, Arr], Int) = {
-    val fields = splitByDelimiter(fieldList, delimiter.char).map { f =>
-      val trimmed = f.trim
+    // Build fields array without using map/closure that does non-local return
+    val fieldParts = splitByDelimiter(fieldList, delimiter.char)
+    val fieldsBuf = scala.collection.mutable.ArrayBuffer[String]()
+    var fp = 0
+    while (fp < fieldParts.length) {
+      val trimmed = fieldParts(fp).trim
       if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
         unescape(trimmed.substring(1, trimmed.length - 1)) match {
           case Left(msg) => return (Left(InvalidEscape(msg, lines(startIdx).lineNumber)), 0)
-          case Right(k) => k
+          case Right(k) => fieldsBuf += k
         }
       } else {
-        trimmed
+        fieldsBuf += trimmed
       }
+      fp += 1
     }
-    
+    val fields = fieldsBuf.toArray
+
     val rowDepth = headerDepth + 1
     var idx = startIdx
     val rows = scala.collection.mutable.ArrayBuffer[Obj]()
@@ -468,14 +497,18 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
           return (Left(WidthMismatch(fields.length, values.length, line.lineNumber)), idx - startIdx)
         }
         
-        val fieldValues = fields.zip(values).map { case (key, value) =>
-          parsePrimitive(value.trim, line.lineNumber) match {
+        // Build fieldValues without map/closure
+        val fieldValuesBuf = scala.collection.mutable.ArrayBuffer[(String, Primitive)]()
+        var j = 0
+        while (j < fields.length && j < values.length) {
+          parsePrimitive(values(j).trim, line.lineNumber) match {
             case Left(err) => return (Left(err), idx - startIdx)
-            case Right(prim) => (key, prim)
+            case Right(prim) => fieldValuesBuf += ((fields(j), prim))
           }
+          j += 1
         }
         
-        rows += Obj(Chunk.fromIterable(fieldValues))
+        rows += Obj(Chunk.fromIterable(fieldValuesBuf))
       }
       idx += 1
     }
