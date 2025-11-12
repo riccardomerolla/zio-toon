@@ -123,6 +123,44 @@ The CI workflow:
 - Verify your `SONATYPE_USERNAME` and `SONATYPE_PASSWORD` secrets are correct
 - Ensure your Sonatype account is active and verified
 
+### "401: Unauthorized" during staging repository creation
+This error means your Sonatype credentials are incorrect or not properly set:
+
+1. **Verify your Sonatype Central credentials:**
+   - Go to: https://central.sonatype.com/
+   - Try logging in with your username and password
+   - If login fails, reset your password
+
+2. **Check which Sonatype system you're using:**
+   - **New Sonatype Central** (recommended): https://central.sonatype.com/
+   - **Legacy OSS** (if you created account before 2024): https://s01.oss.sonatype.org/
+
+3. **For Sonatype Central (recommended):**
+   - Username: Your email or username
+   - Password: Generate a token at https://central.sonatype.com/account
+   - Click "Generate User Token"
+   - Use the generated token as `SONATYPE_PASSWORD`
+
+4. **For Legacy OSS Sonatype:**
+   - Username: Your Sonatype JIRA username
+   - Password: Your Sonatype JIRA password
+   - Or generate a token at: https://s01.oss.sonatype.org/
+
+5. **Update GitHub Secrets:**
+   - Go to: https://github.com/riccardomerolla/zio-toon/settings/secrets/actions
+   - Update `SONATYPE_USERNAME` with your username
+   - Update `SONATYPE_PASSWORD` with your password or token
+   - **Important:** No extra spaces, copy exactly as shown
+
+6. **Test locally (optional):**
+   ```bash
+   export SONATYPE_USERNAME="your-username"
+   export SONATYPE_PASSWORD="your-password-or-token"
+   sbt "sonatypeList"
+   ```
+
+If you're unsure which system you're using, try the Sonatype Central token first (step 3).
+
 ### Signing fails
 - Check that `PGP_SECRET` is properly base64 encoded
 - Verify `PGP_PASSPHRASE` matches your key's passphrase
