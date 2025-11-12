@@ -5,14 +5,21 @@ import zio.Chunk
 import ToonValue._
 
 /** Encoder for converting ToonValue to TOON format string.
+  *
+  * Pure functional implementation following FP principles:
+  *   - No mutable state
+  *   - Pure functions (same input -> same output)
+  *   - Uses immutable data structures (Chunk)
+  *   - Pattern matching over conditionals
+  *   - Recursive over imperative loops
   */
 class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
 
   import StringUtils._
 
-  private val indent = " " * config.indentSize
+  private val indent: String = " " * config.indentSize
 
-  /** Encode a ToonValue to TOON format string.
+  /** Encode a ToonValue to TOON format string. Pure function - no side effects.
     */
   def encode(value: ToonValue): String =
     encodeValue(value, 0, isRootContext = true).mkString("\n")
@@ -48,22 +55,17 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
     *   - No trailing zeros in fractional part
     *   - If fractional part is zero, emit as integer
     *   - -0 becomes 0
+    *
+    * Pure function - no side effects or early returns.
     */
-  private def formatNumber(n: Double): String = {
-    if (n.isNaN || n.isInfinity) return "null"
-    if (n == 0.0 || n == -0.0) return "0"
-
-    // Check if it's an integer value
-    if (n == n.toLong.toDouble && n.abs < Long.MaxValue.toDouble) {
-      n.toLong.toString
-    }
+  private def formatNumber(n: Double): String =
+    if (n.isNaN || n.isInfinity) "null"
+    else if (n == 0.0 || n == -0.0) "0"
+    else if (n == n.toLong.toDouble && n.abs < Long.MaxValue.toDouble) n.toLong.toString
     else {
-      // Format with sufficient precision, remove trailing zeros
-      val formatted       = f"$n%.15f"
-      val withoutTrailing = formatted.replaceAll("0+$", "").replaceAll("\\.$", "")
-      withoutTrailing
+      val formatted = f"$n%.15f"
+      formatted.replaceAll("0+$", "").replaceAll("\\.$", "")
     }
-  }
 
   /** Encode root-level object (no indentation for first level fields).
     */
@@ -100,28 +102,24 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
     }
   }
 
-  /** Encode an array.
+  /** Encode an array. Pure function - uses pattern matching instead of early returns.
     */
-  private def encodeArray(arr: Arr, depth: Int, keyOpt: Option[String]): Chunk[String] = {
-    if (arr.isEmpty) {
-      val indentation = indent * depth
-      val header      = keyOpt match {
-        case Some(key) => s"$indentation${quoteKeyIfNeeded(key)}[0]:"
-        case None      => s"$indentation[0]:"
-      }
-      return Chunk.single(header)
-    }
-
-    // Determine array type
-    if (arr.allPrimitives) {
-      encodeInlineArray(arr, depth, keyOpt)
-    }
-    else if (arr.isUniform && arr.elements.head.isInstanceOf[Obj]) {
+  private def encodeArray(arr: Arr, depth: Int, keyOpt: Option[String]): Chunk[String] =
+    if (arr.isEmpty) encodeEmptyArray(depth, keyOpt)
+    else if (arr.allPrimitives) encodeInlineArray(arr, depth, keyOpt)
+    else if (arr.isUniform && arr.elements.headOption.exists(_.isInstanceOf[Obj]))
       encodeTabularArray(arr, depth, keyOpt)
+    else encodeListArray(arr, depth, keyOpt)
+
+  /** Encode an empty array. Pure helper function.
+    */
+  private def encodeEmptyArray(depth: Int, keyOpt: Option[String]): Chunk[String] = {
+    val indentation = indent * depth
+    val header      = keyOpt match {
+      case Some(key) => s"$indentation${quoteKeyIfNeeded(key)}[0]:"
+      case None      => s"$indentation[0]:"
     }
-    else {
-      encodeListArray(arr, depth, keyOpt)
-    }
+    Chunk.single(header)
   }
 
   /** Encode root-level array.
@@ -155,43 +153,44 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
     Chunk.single(header)
   }
 
-  /** Encode a tabular array: key[N]{f1,f2}: with rows
+  /** Encode a tabular array: key[N]{f1,f2}: with rows Pure function - uses pattern matching and flatMap instead of
+    * early returns.
     */
   private def encodeTabularArray(arr: Arr, depth: Int, keyOpt: Option[String]): Chunk[String] = {
-    val indentation    = indent * depth
-    val rowIndentation = indent * (depth + 1)
-
     val objs = arr.elements.collect { case o: Obj => o }
-    if (objs.isEmpty) return Chunk.empty
 
-    // Extract field names from first object
-    val fieldNames   = objs.head.fields.map(_._1)
-    val quotedFields = fieldNames.map(quoteKeyIfNeeded)
+    objs.headOption match {
+      case None           => Chunk.empty
+      case Some(firstObj) =>
+        val indentation    = indent * depth
+        val rowIndentation = indent * (depth + 1)
+        val fieldNames     = firstObj.fields.map(_._1)
+        val quotedFields   = fieldNames.map(quoteKeyIfNeeded)
+        val delimChar      = config.delimiter.char
+        val delimSymbol    = if (config.delimiter.isComma) "" else config.delimiter.symbol
+        val fieldList      = quotedFields.mkString(delimChar.toString)
 
-    val delimChar   = config.delimiter.char
-    val delimSymbol = if (config.delimiter.isComma) "" else config.delimiter.symbol
-    val fieldList   = quotedFields.mkString(delimChar.toString)
-
-    val header = keyOpt match {
-      case Some(key) =>
-        s"$indentation${quoteKeyIfNeeded(key)}[${arr.length}$delimSymbol]{$fieldList}:"
-      case None      =>
-        s"$indentation[${arr.length}$delimSymbol]{$fieldList}:"
-    }
-
-    // Encode rows
-    val rows = objs.map { obj =>
-      val values = fieldNames.map { fieldName =>
-        obj.fields.find(_._1 == fieldName) match {
-          case Some((_, prim: Primitive)) => encodePrimitive(prim)
-          case Some((_, _))               => "null" // Complex values in tabular not supported, use null
-          case None                       => "null" // Missing field
+        val header = keyOpt match {
+          case Some(key) =>
+            s"$indentation${quoteKeyIfNeeded(key)}[${arr.length}$delimSymbol]{$fieldList}:"
+          case None      =>
+            s"$indentation[${arr.length}$delimSymbol]{$fieldList}:"
         }
-      }
-      s"$rowIndentation${values.mkString(delimChar.toString)}"
-    }
 
-    header +: rows
+        // Encode rows using map instead of mutable collection
+        val rows = objs.map { obj =>
+          val values = fieldNames.map { fieldName =>
+            obj.fields.find(_._1 == fieldName) match {
+              case Some((_, prim: Primitive)) => encodePrimitive(prim)
+              case Some((_, _))               => "null"
+              case None                       => "null"
+            }
+          }
+          s"$rowIndentation${values.mkString(delimChar.toString)}"
+        }
+
+        header +: rows
+    }
   }
 
   /** Encode a list-style array with items marked by "-"

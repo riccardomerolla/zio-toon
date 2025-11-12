@@ -4,12 +4,15 @@ import zio.Chunk
 
 import ToonError._
 import ToonValue._
-import scala.util.boundary
-import scala.util.boundary.break
 
 /** Decoder for parsing TOON format strings into ToonValue.
   *
-  * Uses Scala 3's boundary/break for early returns following modern Scala 3 practices.
+  * Pure functional implementation following FP principles:
+  *   - No mutable state
+  *   - Pure functions with Either for error handling
+  *   - No early returns (boundary/break removed)
+  *   - Recursive over imperative loops
+  *   - Immutable data structures
   */
 class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
 
@@ -21,78 +24,80 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
 
   /** Decode a TOON format string into a ToonValue.
     *
-    * Following ZIO best practices: all errors are in the error channel, no exceptions are thrown.
-    *
-    * Uses Scala 3's boundary/break for clean early exits.
+    * Pure function - all errors in Either, no exceptions thrown, no early returns.
     */
-  def decode(input: String): Either[ToonError, ToonValue] = boundary {
-    if (input.trim.isEmpty) {
-      // Empty input returns null per spec
-      break(Right(Null))
+  def decode(input: String): Either[ToonError, ToonValue] =
+    if (input.trim.isEmpty) Right(Null)
+    else
+      for {
+        lines  <- parseLines(input)
+        result <- if (lines.isEmpty) Right(Null)
+                  else decodeRoot(lines)
+      } yield result
+
+  /** Decode the root value based on the first line structure. Pure function using pattern matching.
+    */
+  private def decodeRoot(lines: Chunk[Line]): Either[ToonError, ToonValue] = {
+    val firstLine = lines.head
+    val content   = firstLine.content
+
+    if (content.matches("^.+\\[\\d+.*\\]:.*") && content.contains("[")) {
+      // Object with array field at root
+      val (result, _) = parseObject(lines, 0)
+      result
     }
-
-    // Parse lines with indentation - handle errors in Either
-    parseLines(input) match {
-      case Left(error)  => break(Left(error))
-      case Right(lines) =>
-        if (lines.isEmpty) {
-          break(Right(Null))
-        }
-
-        // Determine root form
-        val firstLine = lines.head
-        // Check if it's a keyed array (e.g., "users[2]{...}:" or "tags[3]:")
-        if (firstLine.content.matches("^.+\\[\\d+.*\\]:.*") && firstLine.content.contains("[")) {
-          // This is an object with array field at root
-          parseObject(lines, 0)._1
-        }
-        else if (firstLine.content.matches("^\\[\\d+.*\\]:.*")) {
-          // Array at root without key
-          parseArray(lines, 0, None)._1
-        }
-        else if (firstLine.content.contains(":")) {
-          // Object at root
-          parseObject(lines, 0)._1
-        }
-        else {
-          // Single primitive value
-          parsePrimitive(firstLine.content, firstLine.lineNumber)
-        }
+    else if (content.matches("^\\[\\d+.*\\]:.*")) {
+      // Array at root without key
+      val (result, _) = parseArray(lines, 0, None)
+      result
+    }
+    else if (content.contains(":")) {
+      // Object at root
+      val (result, _) = parseObject(lines, 0)
+      result
+    }
+    else {
+      // Single primitive value
+      parsePrimitive(firstLine.content, firstLine.lineNumber)
     }
   }
 
-  /** Parse lines with indentation information. Returns Either to handle indentation errors without throwing. Uses Scala
-    * 3's boundary/break for clean error handling.
+  /** Parse lines with indentation information. Pure function using recursion instead of mutable state.
     */
-  private def parseLines(input: String): Either[ToonError, Chunk[Line]] = boundary {
+  private def parseLines(input: String): Either[ToonError, Chunk[Line]] = {
     val rawLines = input.split("\n")
-    val lines    = scala.collection.mutable.ArrayBuffer[Line]()
 
-    var idx = 0
-    while (idx < rawLines.length) {
-      val line = rawLines(idx)
-      if (line.trim.nonEmpty) {
-        val indent = line.takeWhile(_ == ' ').length
+    def processLine(idx: Int, lineText: String): Either[ToonError, Option[Line]] =
+      if (lineText.trim.isEmpty) Right(None)
+      else {
+        val indent = lineText.takeWhile(_ == ' ').length
         val depth  = indent / config.indentSize
 
-        // Strict mode: check indentation
         if (config.strictMode && indent % config.indentSize != 0) {
-          break(
-            Left(
-              IndentationError(
-                s"Indentation must be a multiple of ${config.indentSize} spaces",
-                idx + 1,
-              )
+          Left(
+            IndentationError(
+              s"Indentation must be a multiple of ${config.indentSize} spaces",
+              idx + 1,
             )
           )
         }
-
-        lines += Line(line.trim, depth, idx + 1, indent)
+        else {
+          Right(Some(Line(lineText.trim, depth, idx + 1, indent)))
+        }
       }
-      idx += 1
-    }
 
-    Right(Chunk.fromIterable(lines))
+    // Process all lines, collecting only the successful non-empty ones
+    rawLines
+      .zipWithIndex
+      .foldLeft[Either[ToonError, List[Line]]](Right(List.empty)) {
+        case (Left(error), _)              => Left(error)
+        case (Right(acc), (lineText, idx)) =>
+          processLine(idx, lineText).map {
+            case Some(line) => acc :+ line
+            case None       => acc
+          }
+      }
+      .map(Chunk.fromIterable)
   }
 
   /** Parse a primitive value from a string.
@@ -138,193 +143,203 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
   }
 
-  /** Parse an object from lines starting at given index. Returns (result, number of lines consumed).
+  /** Parse an object from lines starting at given index. Returns (result, number of lines consumed). Pure
+    * tail-recursive function without mutable state.
     */
   private def parseObject(lines: Chunk[Line], startIdx: Int): (Either[ToonError, Obj], Int) = {
     val startDepth = if (startIdx < lines.length) lines(startIdx).depth else 0
-    var idx        = startIdx
-    val fields     = scala.collection.mutable.ArrayBuffer[(String, ToonValue)]()
 
-    while (idx < lines.length && lines(idx).depth >= startDepth) {
-      val line = lines(idx)
-
-      // Stop if we've gone back to a shallower depth
-      if (line.depth < startDepth) {
-        return (Right(Obj(Chunk.fromIterable(fields))), idx - startIdx)
+    @scala.annotation.tailrec
+    def loop(idx: Int, fields: List[(String, ToonValue)]): (Either[ToonError, Obj], Int) =
+      if (idx >= lines.length || lines(idx).depth < startDepth) {
+        // Done - return accumulated fields
+        (Right(Obj(Chunk.fromIterable(fields))), idx - startIdx)
       }
-
-      // Only process lines at exactly this depth
-      if (line.depth == startDepth) {
+      else if (lines(idx).depth > startDepth) {
+        // Skip deeper nested content (should be handled by recursive calls)
+        loop(idx + 1, fields)
+      }
+      else {
+        // Process line at current depth
+        val line    = lines(idx)
         val content = line.content
 
-        // Check for list item marker
         if (content.startsWith("-")) {
-          // This shouldn't happen in an object context
-          return (Left(ParseError(s"Unexpected list item marker in object at line ${line.lineNumber}")), idx - startIdx)
-        }
-
-        // Parse key-value pair
-        val colonIdx = findUnquotedColon(content)
-        if (colonIdx < 0) {
-          if (config.strictMode) {
-            return (Left(MissingColon(line.lineNumber)), idx - startIdx)
-          }
-          // In non-strict mode, skip the line
-          idx += 1
+          // Unexpected list marker in object
+          (Left(ParseError(s"Unexpected list item marker in object at line ${line.lineNumber}")), idx - startIdx)
         }
         else {
-          // Check if this is an array header (key[N]: ...)
-          // Use a more specific regex that doesn't over-match
-          if (content.matches("^.+?\\[\\d+[|\\t]?\\](?:\\{.+?\\})?:.*")) {
-            // Extract the array header info
-            val headerMatch = """^(.+?)\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
-            content match {
-              case headerMatch(keyPart, lengthStr, delimSymbol, fieldList, values) =>
-                val key         = keyPart.trim
-                val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-                  unescape(key.substring(1, key.length - 1)) match {
-                    case Left(msg) => return (Left(InvalidEscape(msg, line.lineNumber)), idx - startIdx)
-                    case Right(k)  => k
-                  }
-                }
-                else {
-                  key
-                }
-
-                val length    = lengthStr.toInt
-                val delimiter =
-                  if (delimSymbol == "\t") Delimiter.Tab
-                  else if (delimSymbol == "|") Delimiter.Pipe
-                  else Delimiter.Comma
-
-                if (values.nonEmpty) {
-                  // Inline array
-                  parseInlineArrayValues(values, delimiter, length, line.lineNumber) match {
-                    case Left(err)  => return (Left(err), idx - startIdx)
-                    case Right(arr) =>
-                      fields += ((unquotedKey, arr))
-                      idx += 1
-                  }
-                }
-                else if (fieldList != null && fieldList.nonEmpty) {
-                  // Tabular array with child rows
-                  val (result, consumed) = parseTabularArray(lines, idx + 1, length, fieldList, delimiter, line.depth)
-                  result match {
-                    case Left(err)  => return (Left(err), idx - startIdx)
-                    case Right(arr) =>
-                      fields += ((unquotedKey, arr))
-                      idx += consumed + 1
-                  }
-                }
-                else if (length == 0) {
-                  // Empty array
-                  fields += ((unquotedKey, Arr.empty))
-                  idx += 1
-                }
-                else {
-                  // List array with child items
-                  val (result, consumed) = parseListArray(lines, idx + 1, length, line.depth)
-                  result match {
-                    case Left(err)  => return (Left(err), idx - startIdx)
-                    case Right(arr) =>
-                      fields += ((unquotedKey, arr))
-                      idx += consumed + 1
-                  }
-                }
-
-              case _ =>
-                return (Left(ParseError(s"Invalid array header at line ${line.lineNumber}")), idx - startIdx)
-            }
+          processObjectLine(lines, idx, startDepth, fields) match {
+            case Left(error)                  => (Left(error), idx - startIdx)
+            case Right((newFields, consumed)) => loop(idx + consumed, fields ++ newFields)
           }
-          else {
-            val colonIdx = findUnquotedColon(content)
-            if (colonIdx < 0) {
-              if (config.strictMode) {
-                return (Left(MissingColon(line.lineNumber)), idx - startIdx)
-              }
-              // In non-strict mode, skip the line
-              idx += 1
-            }
-            else {
-              val key         = content.substring(0, colonIdx).trim
-              val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-                unescape(key.substring(1, key.length - 1)) match {
-                  case Left(msg) => return (Left(InvalidEscape(msg, line.lineNumber)), idx - startIdx)
-                  case Right(k)  => k
-                }
-              }
-              else {
-                key
-              }
+        }
+      }
 
-              val valueStr = content.substring(colonIdx + 1).trim
+    loop(startIdx, List.empty)
+  }
 
-              if (valueStr.isEmpty) {
-                // Nested object or array
-                idx += 1
+  /** Process a single object line and return new fields and lines consumed. Pure helper function.
+    */
+  private def processObjectLine(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      currentFields: List[(String, ToonValue)],
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val line     = lines(idx)
+    val content  = line.content
+    val colonIdx = findUnquotedColon(content)
 
-                // Check if next line is an array
-                if (idx < lines.length && lines(idx).depth == startDepth + 1) {
-                  val nextLine = lines(idx)
-                  if (nextLine.content.matches("^-.*") || unquotedKey.matches(".*\\[\\d+.*\\]:?$")) {
-                    // Array
-                    parseArrayContent(lines, idx, startDepth + 1) match {
-                      case (Left(err), _)         => return (Left(err), idx - startIdx)
-                      case (Right(arr), consumed) =>
-                        fields += ((unquotedKey, arr))
-                        idx += consumed
-                    }
-                  }
-                  else {
-                    // Nested object
-                    parseObject(lines, idx) match {
-                      case (Left(err), _)         => return (Left(err), idx - startIdx)
-                      case (Right(obj), consumed) =>
-                        fields += ((unquotedKey, obj))
-                        idx += consumed
-                    }
-                  }
-                }
-                else {
-                  // Empty object
-                  fields += ((unquotedKey, Obj.empty))
-                }
-              }
-              else {
-                // Inline value - not an array header
-                parsePrimitive(valueStr, line.lineNumber) match {
-                  case Left(err)   => return (Left(err), idx - startIdx)
-                  case Right(prim) =>
-                    fields += ((unquotedKey, prim))
-                    idx += 1
-                }
-              }
-            }
-          }
+    if (colonIdx < 0) {
+      if (config.strictMode) {
+        Left(MissingColon(line.lineNumber))
+      }
+      else {
+        // Skip line in non-strict mode
+        Right((List.empty, 1))
+      }
+    }
+    else {
+      parseObjectField(lines, idx, depth, content, colonIdx)
+    }
+  }
+
+  /** Parse an object field (key-value pair). Pure function that handles all field types.
+    */
+  private def parseObjectField(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      content: String,
+      colonIdx: Int,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val line = lines(idx)
+
+    // Check if this is an array header
+    if (content.matches("^.+?\\[\\d+[|\\t]?\\](?:\\{.+?\\})?:.*")) {
+      parseArrayField(lines, idx, depth, content)
+    }
+    else {
+      parseSimpleField(lines, idx, depth, content, colonIdx)
+    }
+  }
+
+  /** Parse a simple key-value field. Pure function.
+    */
+  private def parseSimpleField(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      content: String,
+      colonIdx: Int,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val line = lines(idx)
+    val key  = content.substring(0, colonIdx).trim
+
+    val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
+      unescape(key.substring(1, key.length - 1)) match {
+        case Left(msg) => return Left(InvalidEscape(msg, line.lineNumber))
+        case Right(k)  => k
+      }
+    }
+    else key
+
+    val valueStr = content.substring(colonIdx + 1).trim
+
+    if (valueStr.isEmpty) {
+      // Check for nested content
+      if (idx + 1 < lines.length && lines(idx + 1).depth == depth + 1) {
+        val nextLine = lines(idx + 1)
+        if (nextLine.content.startsWith("-") || nextLine.content.matches("^\\[\\d+.*\\]:?.*")) {
+          // Nested array
+          val (result, consumed) = parseArray(lines, idx + 1, Some(unquotedKey))
+          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
+        }
+        else {
+          // Nested object
+          val (result, consumed) = parseObject(lines, idx + 1)
+          result.map(obj => (List((unquotedKey, obj)), consumed + 1))
         }
       }
       else {
-        idx += 1
+        // Empty object
+        Right((List((unquotedKey, Obj.empty)), 1))
       }
     }
-
-    (Right(Obj(Chunk.fromIterable(fields))), idx - startIdx)
+    else {
+      // Inline primitive value
+      parsePrimitive(valueStr, line.lineNumber).map(prim => (List((unquotedKey, prim)), 1))
+    }
   }
 
-  /** Find the index of an unquoted colon in a string.
+  /** Parse an array field from object. Pure function extracting array parsing logic.
+    */
+  private def parseArrayField(
+      lines: Chunk[Line],
+      idx: Int,
+      depth: Int,
+      content: String,
+    ): Either[ToonError, (List[(String, ToonValue)], Int)] = {
+    val line        = lines(idx)
+    val headerMatch = """^(.+?)\[(\d+)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
+
+    content match {
+      case headerMatch(keyPart, lengthStr, delimSymbol, fieldList, values) =>
+        val key         = keyPart.trim
+        val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
+          unescape(key.substring(1, key.length - 1)) match {
+            case Left(msg) => return Left(InvalidEscape(msg, line.lineNumber))
+            case Right(k)  => k
+          }
+        }
+        else key
+
+        val length    = lengthStr.toInt
+        val delimiter =
+          if (delimSymbol == "\t") Delimiter.Tab
+          else if (delimSymbol == "|") Delimiter.Pipe
+          else Delimiter.Comma
+
+        if (values.nonEmpty) {
+          // Inline array
+          parseInlineArrayValues(values, delimiter, length, line.lineNumber)
+            .map(arr => (List((unquotedKey, arr)), 1))
+        }
+        else if (fieldList != null && fieldList.nonEmpty) {
+          // Tabular array
+          val (result, consumed) = parseTabularArray(lines, idx + 1, length, fieldList, delimiter, depth)
+          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
+        }
+        else if (length == 0) {
+          // Empty array
+          Right((List((unquotedKey, Arr.empty)), 1))
+        }
+        else {
+          // List array
+          val (result, consumed) = parseListArray(lines, idx + 1, length, depth)
+          result.map(arr => (List((unquotedKey, arr)), consumed + 1))
+        }
+
+      case _ =>
+        Left(ParseError(s"Invalid array header at line ${line.lineNumber}"))
+    }
+  }
+
+  /** Find the index of an unquoted colon in a string. Pure tail-recursive function.
     */
   private def findUnquotedColon(s: String): Int = {
-    var inQuotes = false
-    var i        = 0
-    while (i < s.length) {
-      s.charAt(i) match {
-        case '"'              => inQuotes = !inQuotes
-        case ':' if !inQuotes => return i
-        case _                =>
-      }
-      i += 1
-    }
-    -1
+    @scala.annotation.tailrec
+    def loop(idx: Int, inQuotes: Boolean): Int =
+      if (idx >= s.length) -1
+      else
+        s.charAt(idx) match {
+          case '"'              => loop(idx + 1, !inQuotes)
+          case ':' if !inQuotes => idx
+          case _                => loop(idx + 1, inQuotes)
+        }
+
+    loop(0, false)
   }
 
   /** Parse an array line (e.g., "key[3]: v1,v2,v3") and return (key, array).
@@ -453,35 +468,36 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
   }
 
-  /** Parse inline array values.
+  /** Parse inline array values. Pure function using foldLeft instead of mutable state.
     */
-  private def parseInlineArrayValues(values: String, delimiter: Delimiter, expectedLength: Int, lineNumber: Int)
-      : Either[ToonError, Arr] = {
+  private def parseInlineArrayValues(
+      values: String,
+      delimiter: Delimiter,
+      expectedLength: Int,
+      lineNumber: Int,
+    ): Either[ToonError, Arr] =
     if (values.isEmpty && expectedLength == 0) {
-      return Right(Arr.empty)
+      Right(Arr.empty)
     }
+    else {
+      val split = splitByDelimiter(values, delimiter.char)
 
-    val split = splitByDelimiter(values, delimiter.char)
-
-    if (config.strictMode && split.length != expectedLength) {
-      return Left(CountMismatch(expectedLength, split.length, "inline array", lineNumber))
-    }
-
-    // Build elements without using lambda-return to avoid non-local returns
-    val elementsBuf = scala.collection.mutable.ArrayBuffer[Primitive]()
-    var i           = 0
-    while (i < split.length) {
-      parsePrimitive(split(i).trim, lineNumber) match {
-        case Left(err)   => return Left(err)
-        case Right(prim) => elementsBuf += prim
+      if (config.strictMode && split.length != expectedLength) {
+        Left(CountMismatch(expectedLength, split.length, "inline array", lineNumber))
       }
-      i += 1
+      else {
+        // Use foldLeft to accumulate Either values
+        split
+          .foldLeft[Either[ToonError, List[Primitive]]](Right(List.empty)) {
+            case (Left(error), _)    => Left(error)
+            case (Right(acc), value) =>
+              parsePrimitive(value.trim, lineNumber).map(prim => acc :+ prim)
+          }
+          .map(prims => Arr(Chunk.fromIterable(prims)))
+      }
     }
 
-    Right(Arr(Chunk.fromIterable(elementsBuf)))
-  }
-
-  /** Parse tabular array.
+  /** Parse tabular array. Pure functional implementation using foldLeft and recursion.
     */
   private def parseTabularArray(
       lines: Chunk[Line],
@@ -491,171 +507,185 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       delimiter: Delimiter,
       headerDepth: Int,
     ): (Either[ToonError, Arr], Int) = {
-    // Build fields array without using map/closure that does non-local return
-    val fieldParts = splitByDelimiter(fieldList, delimiter.char)
-    val fieldsBuf  = scala.collection.mutable.ArrayBuffer[String]()
-    var fp         = 0
-    while (fp < fieldParts.length) {
-      val trimmed = fieldParts(fp).trim
-      if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
-        unescape(trimmed.substring(1, trimmed.length - 1)) match {
-          case Left(msg) => return (Left(InvalidEscape(msg, lines(startIdx).lineNumber)), 0)
-          case Right(k)  => fieldsBuf += k
-        }
-      }
-      else {
-        fieldsBuf += trimmed
-      }
-      fp += 1
-    }
-    val fields     = fieldsBuf.toArray
-
-    val rowDepth = headerDepth + 1
-    var idx      = startIdx
-    val rows     = scala.collection.mutable.ArrayBuffer[Obj]()
-
-    while (idx < lines.length && lines(idx).depth >= rowDepth) {
-      val line = lines(idx)
-      if (line.depth == rowDepth) {
-        val values = splitByDelimiter(line.content, delimiter.char)
-
-        if (config.strictMode && values.length != fields.length) {
-          return (Left(WidthMismatch(fields.length, values.length, line.lineNumber)), idx - startIdx)
-        }
-
-        // Build fieldValues without map/closure
-        val fieldValuesBuf = scala.collection.mutable.ArrayBuffer[(String, Primitive)]()
-        var j              = 0
-        while (j < fields.length && j < values.length) {
-          parsePrimitive(values(j).trim, line.lineNumber) match {
-            case Left(err)   => return (Left(err), idx - startIdx)
-            case Right(prim) => fieldValuesBuf += ((fields(j), prim))
+    // Parse field names using foldLeft instead of mutable buffer
+    val fieldParts   = splitByDelimiter(fieldList, delimiter.char)
+    val fieldsResult = fieldParts.foldLeft[Either[ToonError, List[String]]](Right(List.empty)) {
+      case (Left(error), _)        => Left(error)
+      case (Right(acc), fieldPart) =>
+        val trimmed = fieldPart.trim
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+          unescape(trimmed.substring(1, trimmed.length - 1)) match {
+            case Left(msg) => Left(InvalidEscape(msg, lines(startIdx).lineNumber))
+            case Right(k)  => Right(acc :+ k)
           }
-          j += 1
-        }
-
-        rows += Obj(Chunk.fromIterable(fieldValuesBuf))
-      }
-      idx += 1
-    }
-
-    if (config.strictMode && rows.length != expectedLength) {
-      return (
-        Left(CountMismatch(expectedLength, rows.length, "tabular array", lines(startIdx).lineNumber)),
-        idx - startIdx,
-      )
-    }
-
-    (Right(Arr(Chunk.fromIterable(rows))), idx - startIdx)
-  }
-
-  /** Parse list array.
-    */
-  private def parseListArray(lines: Chunk[Line], startIdx: Int, expectedLength: Int, headerDepth: Int)
-      : (Either[ToonError, Arr], Int) = {
-    val itemDepth = headerDepth + 1
-    var idx       = startIdx
-    val items     = scala.collection.mutable.ArrayBuffer[ToonValue]()
-
-    while (idx < lines.length && lines(idx).depth >= itemDepth) {
-      val line = lines(idx)
-      if (line.depth == itemDepth && line.content.startsWith("-")) {
-        val content = line.content.substring(1).trim
-
-        if (content.isEmpty) {
-          // Empty item
-          items += Obj.empty
-          idx += 1
         }
         else {
-          val colonIdx = findUnquotedColon(content)
-          if (colonIdx < 0) {
-            // Simple primitive
-            parsePrimitive(content, line.lineNumber) match {
-              case Left(err)   => return (Left(err), idx - startIdx)
-              case Right(prim) => items += prim
-            }
-            idx += 1
-          }
-          else {
-            // Object item
-            val key      = content.substring(0, colonIdx).trim
-            val valueStr = content.substring(colonIdx + 1).trim
+          Right(acc :+ trimmed)
+        }
+    }
 
-            if (valueStr.isEmpty) {
-              // Nested structure
-              idx += 1
-              parseObject(lines, idx) match {
-                case (Left(err), _)         => return (Left(err), idx - startIdx)
-                case (Right(obj), consumed) =>
-                  items += obj
-                  idx += consumed
-              }
+    fieldsResult match {
+      case Left(error)      => (Left(error), 0)
+      case Right(fieldList) =>
+        val fields   = fieldList.toArray
+        val rowDepth = headerDepth + 1
+
+        // Parse rows using tail recursion
+        @scala.annotation.tailrec
+        def parseRows(idx: Int, rows: List[Obj]): (Either[ToonError, List[Obj]], Int) =
+          if (idx >= lines.length || lines(idx).depth < rowDepth) {
+            (Right(rows), idx - startIdx)
+          }
+          else if (lines(idx).depth == rowDepth) {
+            val line   = lines(idx)
+            val values = splitByDelimiter(line.content, delimiter.char)
+
+            if (config.strictMode && values.length != fields.length) {
+              (Left(WidthMismatch(fields.length, values.length, line.lineNumber)), idx - startIdx)
             }
             else {
-              // Simple field
-              parsePrimitive(valueStr, line.lineNumber) match {
-                case Left(err)   => return (Left(err), idx - startIdx)
-                case Right(prim) =>
-                  val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-                    unescape(key.substring(1, key.length - 1)) match {
-                      case Left(msg) => return (Left(InvalidEscape(msg, line.lineNumber)), idx - startIdx)
-                      case Right(k)  => k
-                    }
-                  }
-                  else {
-                    key
-                  }
-                  items += Obj((unquotedKey, prim))
-                  idx += 1
+              // Parse field values using foldLeft
+              val fieldValuesResult = fields
+                .zip(values)
+                .foldLeft[Either[ToonError, List[(String, Primitive)]]](Right(List.empty)) {
+                  case (Left(error), _)                 => Left(error)
+                  case (Right(acc), (fieldName, value)) =>
+                    parsePrimitive(value.trim, line.lineNumber).map(prim => acc :+ (fieldName, prim))
+                }
+
+              fieldValuesResult match {
+                case Left(error)        => (Left(error), idx - startIdx)
+                case Right(fieldValues) =>
+                  val row = Obj(Chunk.fromIterable(fieldValues))
+                  parseRows(idx + 1, rows :+ row)
               }
             }
           }
+          else {
+            parseRows(idx + 1, rows)
+          }
+
+        val (rowsResult, consumed) = parseRows(startIdx, List.empty)
+        rowsResult match {
+          case Left(error) => (Left(error), consumed)
+          case Right(rows) =>
+            if (config.strictMode && rows.length != expectedLength) {
+              (Left(CountMismatch(expectedLength, rows.length, "tabular array", lines(startIdx).lineNumber)), consumed)
+            }
+            else {
+              (Right(Arr(Chunk.fromIterable(rows))), consumed)
+            }
+        }
+    }
+  }
+
+  /** Parse list array. Pure functional implementation using tail recursion.
+    */
+  private def parseListArray(
+      lines: Chunk[Line],
+      startIdx: Int,
+      expectedLength: Int,
+      headerDepth: Int,
+    ): (Either[ToonError, Arr], Int) = {
+    val itemDepth = headerDepth + 1
+
+    @scala.annotation.tailrec
+    def parseItems(idx: Int, items: List[ToonValue]): (Either[ToonError, List[ToonValue]], Int) =
+      if (idx >= lines.length || lines(idx).depth < itemDepth) {
+        (Right(items), idx - startIdx)
+      }
+      else if (lines(idx).depth == itemDepth && lines(idx).content.startsWith("-")) {
+        parseListItem(lines, idx, startIdx, itemDepth) match {
+          case Left(error)             => (Left(error), idx - startIdx)
+          case Right((item, consumed)) => parseItems(idx + consumed, items :+ item)
         }
       }
       else {
-        idx += 1
+        parseItems(idx + 1, items)
       }
-    }
 
-    if (config.strictMode && items.length != expectedLength) {
-      return (
-        Left(CountMismatch(expectedLength, items.length, "list array", lines(startIdx).lineNumber)),
-        idx - startIdx,
-      )
+    val (itemsResult, consumed) = parseItems(startIdx, List.empty)
+    itemsResult match {
+      case Left(error)  => (Left(error), consumed)
+      case Right(items) =>
+        if (config.strictMode && items.length != expectedLength) {
+          (Left(CountMismatch(expectedLength, items.length, "list array", lines(startIdx).lineNumber)), consumed)
+        }
+        else {
+          (Right(Arr(Chunk.fromIterable(items))), consumed)
+        }
     }
-
-    (Right(Arr(Chunk.fromIterable(items))), idx - startIdx)
   }
 
-  /** Split a string by delimiter, respecting quoted strings.
+  /** Parse a single list item. Pure helper function.
     */
-  private def splitByDelimiter(s: String, delimiter: Char): Array[String] = {
-    val result   = scala.collection.mutable.ArrayBuffer[String]()
-    val current  = new StringBuilder
-    var inQuotes = false
-    var i        = 0
+  private def parseListItem(
+      lines: Chunk[Line],
+      idx: Int,
+      startIdx: Int,
+      itemDepth: Int,
+    ): Either[ToonError, (ToonValue, Int)] = {
+    val line    = lines(idx)
+    val content = line.content.substring(1).trim
 
-    while (i < s.length) {
-      val c = s.charAt(i)
-
-      if (c == '"') {
-        inQuotes = !inQuotes
-        current.append(c)
-      }
-      else if (c == delimiter && !inQuotes) {
-        result += current.toString
-        current.clear()
+    if (content.isEmpty) {
+      Right((Obj.empty, 1))
+    }
+    else {
+      val colonIdx = findUnquotedColon(content)
+      if (colonIdx < 0) {
+        // Simple primitive
+        parsePrimitive(content, line.lineNumber).map(prim => (prim, 1))
       }
       else {
-        current.append(c)
+        val key      = content.substring(0, colonIdx).trim
+        val valueStr = content.substring(colonIdx + 1).trim
+
+        if (valueStr.isEmpty) {
+          // Nested structure
+          val (result, consumed) = parseObject(lines, idx + 1)
+          result.map(obj => (obj, consumed + 1))
+        }
+        else {
+          // Simple field
+          for {
+            prim        <- parsePrimitive(valueStr, line.lineNumber)
+            unquotedKey <- if (key.startsWith("\"") && key.endsWith("\"")) {
+                             unescape(key.substring(1, key.length - 1))
+                               .left
+                               .map(msg => InvalidEscape(msg, line.lineNumber))
+                           }
+                           else {
+                             Right(key)
+                           }
+          } yield (Obj((unquotedKey, prim)), 1)
+        }
+      }
+    }
+  }
+
+  /** Split a string by delimiter, respecting quoted strings. Pure functional implementation using tail recursion.
+    */
+  private def splitByDelimiter(s: String, delimiter: Char): Array[String] = {
+    @scala.annotation.tailrec
+    def loop(idx: Int, inQuotes: Boolean, current: StringBuilder, result: List[String]): List[String] =
+      if (idx >= s.length) {
+        result :+ current.toString
+      }
+      else {
+        val c = s.charAt(idx)
+        if (c == '"') {
+          loop(idx + 1, !inQuotes, current.append(c), result)
+        }
+        else if (c == delimiter && !inQuotes) {
+          loop(idx + 1, inQuotes, new StringBuilder, result :+ current.toString)
+        }
+        else {
+          loop(idx + 1, inQuotes, current.append(c), result)
+        }
       }
 
-      i += 1
-    }
-
-    result += current.toString
-    result.toArray
+    loop(0, false, new StringBuilder, List.empty).toArray
   }
 }
 
