@@ -134,7 +134,11 @@ object ToonJsonService {
       } yield TokenSavings(jsonSize, toonSize, savings, savingsPercent)
 
     def toPrettyJson(value: ToonValue, indent: Int = 2): UIO[String] =
-      ZIO.succeed(toonValueToJsonAst(value).toJsonPretty)
+      ZIO.succeed {
+        val jsonAst   = toonValueToJsonAst(value)
+        val indentOpt = if (indent <= 0) None else Some(indent)
+        Json.encoder.encodeJson(jsonAst, indentOpt).toString
+      }
 
     /** Convert ToonValue to zio-json AST.
       */

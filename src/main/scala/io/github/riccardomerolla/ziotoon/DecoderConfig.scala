@@ -15,7 +15,6 @@ package io.github.riccardomerolla.ziotoon
   * val customConfig = DecoderConfig(
   *   strictMode = false,
   *   indentSize = 4,
-  *   expandPaths = PathExpansion.Safe
   * )
   *
   * // Use with decoder
@@ -38,13 +37,10 @@ package io.github.riccardomerolla.ziotoon
   *   Whether to enable strict mode validation (default: true)
   * @param indentSize
   *   Expected number of spaces per indentation level (default: 2)
-  * @param expandPaths
-  *   Whether to expand dotted paths in keys (default: off)
   */
 final case class DecoderConfig(
     strictMode: Boolean = true,
     indentSize: Int = 2,
-    expandPaths: PathExpansion = PathExpansion.Off,
   )
 
 object DecoderConfig {
@@ -56,19 +52,6 @@ object DecoderConfig {
     *   - Path expansion off
     */
   val default: DecoderConfig = DecoderConfig()
-}
-
-/** Path expansion options for decoder.
-  *
-  * Controls whether dotted keys like "user.name" should be expanded into nested objects.
-  */
-enum PathExpansion {
-
-  /** No path expansion (treat dots as literal characters in keys) */
-  case Off
-
-  /** Safe path expansion (expand dotted paths when unambiguous) */
-  case Safe
 }
 
 /** Errors that can occur during TOON decoding.
@@ -96,6 +79,12 @@ object ToonError {
     */
   final case class InvalidEscape(sequence: String, line: Int) extends ToonError {
     val message: String = s"Invalid escape sequence: $sequence at line $line"
+  }
+
+  /** Invalid numeric literal.
+    */
+  final case class InvalidNumber(value: String, line: Int) extends ToonError {
+    val message: String = s"Invalid number literal '$value' at line $line"
   }
 
   /** String literal not properly terminated.

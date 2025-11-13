@@ -3,6 +3,8 @@ package io.github.riccardomerolla.ziotoon
 import zio._
 import zio.stream._
 
+import StringUtils._
+
 /** Service for streaming TOON encoding/decoding of large documents.
   *
   * Following ZIO best practices:
@@ -43,7 +45,7 @@ trait ToonStreamService {
   /** Encode an array stream as a single TOON array document.
     *
     * Elements are streamed and assembled into array format incrementally. More efficient than collecting all elements
-    * first.
+    * first. Uses `[?]` as the length marker to signal unknown size while preserving TOON compatibility.
     *
     * @param elements
     *   Stream of array elements
@@ -108,19 +110,23 @@ object ToonStreamService {
     def encodeArrayStream(
         elements: ZStream[Any, Nothing, ToonValue],
         key: Option[String],
-      ): ZStream[Any, Nothing, String] =
-      // Collect elements into array then encode
-      // For truly streaming array encoding, would need to modify encoder
-      ZStream.unwrap {
-        elements.runCollect.map { chunk =>
-          val arr   = ToonValue.Arr(chunk)
-          val value = key match {
-            case Some(k) => ToonValue.Obj((k, arr))
-            case None    => arr
-          }
-          ZStream.fromZIO(encoderService.encode(value))
-        }
+      ): ZStream[Any, Nothing, String] = {
+      val encoder       = ToonEncoder(encoderService.config)
+      val delimSymbol   = if (encoderService.config.delimiter.isComma) "" else encoderService.config.delimiter.symbol
+      val lengthLabel   = "?"
+      val headerContent = key match {
+        case Some(k) => s"${quoteKeyIfNeeded(k)}[$lengthLabel$delimSymbol]:"
+        case None    => s"[$lengthLabel$delimSymbol]:"
       }
+
+      val headerStream = ZStream.succeed(headerContent + "\n")
+      val bodyStream   =
+        elements
+          .flatMap(value => ZStream.fromChunk(encoder.encodeListItem(value, 1)))
+          .map(line => line + "\n")
+
+      headerStream ++ bodyStream
+    }
 
     def decodeStream(input: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonValue] =
       input.mapZIO(str => decoderService.decode(str))

@@ -196,68 +196,61 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
   /** Encode a list-style array with items marked by "-"
     */
   private def encodeListArray(arr: Arr, depth: Int, keyOpt: Option[String]): Chunk[String] = {
-    val indentation     = indent * depth
-    val itemIndentation = indent * (depth + 1)
-
+    val indentation = indent * depth
     val delimSymbol = if (config.delimiter.isComma) "" else config.delimiter.symbol
 
     val header = keyOpt match {
-      case Some(key) =>
-        s"$indentation${quoteKeyIfNeeded(key)}[${arr.length}$delimSymbol]:"
-      case None      =>
-        s"$indentation[${arr.length}$delimSymbol]:"
+      case Some(key) => s"$indentation${quoteKeyIfNeeded(key)}[${arr.length}$delimSymbol]:"
+      case None      => s"$indentation[${arr.length}$delimSymbol]:"
     }
 
-    val items = arr.elements.flatMap {
-      case obj: Obj if obj.fields.isEmpty =>
-        // Empty object: just a hyphen
-        Chunk.single(s"$itemIndentation-")
+    val items = arr.elements.flatMap(value => encodeListItem(value, depth + 1))
+    header +: items
+  }
 
+  /** Encode a single list item at the given depth. Exposed for streaming encoder reuse.
+    */
+  private[ziotoon] def encodeListItem(value: ToonValue, itemDepth: Int): Chunk[String] = {
+    val itemIndentation = indent * itemDepth
+
+    value match {
       case obj: Obj =>
-        // Object with fields
-        val firstField      = obj.fields.head
-        val remainingFields = obj.fields.tail
+        if (obj.fields.isEmpty) Chunk.single(s"$itemIndentation-")
+        else {
+          val firstField      = obj.fields.head
+          val remainingFields = obj.fields.tail
 
-        // First field on hyphen line
-        val firstLine = firstField._2 match {
-          case prim: Primitive =>
-            s"$itemIndentation- ${quoteKeyIfNeeded(firstField._1)}: ${encodePrimitive(prim)}"
-          case nestedObj: Obj  =>
-            s"$itemIndentation- ${quoteKeyIfNeeded(firstField._1)}:" +:
-              encodeObject(nestedObj, depth + 2)
-            val header = s"$itemIndentation- ${quoteKeyIfNeeded(firstField._1)}:"
-            header +: encodeObject(nestedObj, depth + 2)
-          case nestedArr: Arr  =>
-            encodeArray(nestedArr, depth + 1, Some(s"- ${quoteKeyIfNeeded(firstField._1)}"))
+          val firstChunk = encodeFirstListField(firstField._1, firstField._2, itemDepth)
+          val rest       = remainingFields.flatMap {
+            case (key, nestedValue) =>
+              encodeField(key, nestedValue, itemDepth + 1)
+          }
+
+          firstChunk ++ rest
         }
-
-        // Remaining fields at depth + 1
-        val first = firstField._2 match {
-          case prim: Primitive =>
-            Chunk.single(s"$itemIndentation- ${quoteKeyIfNeeded(firstField._1)}: ${encodePrimitive(prim)}")
-          case nestedObj: Obj  =>
-            val header = s"$itemIndentation- ${quoteKeyIfNeeded(firstField._1)}:"
-            header +: encodeObject(nestedObj, depth + 2)
-          case nestedArr: Arr  =>
-            encodeArray(nestedArr, depth + 1, Some(s"- ${quoteKeyIfNeeded(firstField._1)}"))
-        }
-
-        val rest = remainingFields.flatMap {
-          case (key, value) =>
-            encodeField(key, value, depth + 1)
-        }
-
-        first ++ rest
 
       case prim: Primitive =>
         Chunk.single(s"$itemIndentation- ${encodePrimitive(prim)}")
 
       case arr: Arr =>
-        // Nested array
-        encodeArray(arr, depth + 1, Some("-"))
+        encodeArray(arr, itemDepth, Some("-"))
     }
+  }
 
-    header +: items
+  private def encodeFirstListField(key: String, value: ToonValue, itemDepth: Int): Chunk[String] = {
+    val indentation = indent * itemDepth
+
+    value match {
+      case prim: Primitive =>
+        Chunk.single(s"$indentation- ${quoteKeyIfNeeded(key)}: ${encodePrimitive(prim)}")
+
+      case nestedObj: Obj =>
+        val header = s"$indentation- ${quoteKeyIfNeeded(key)}:"
+        header +: encodeObject(nestedObj, itemDepth + 1)
+
+      case nestedArr: Arr =>
+        encodeArray(nestedArr, itemDepth, Some(s"- ${quoteKeyIfNeeded(key)}"))
+    }
   }
 }
 

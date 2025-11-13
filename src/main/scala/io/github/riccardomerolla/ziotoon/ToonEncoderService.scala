@@ -61,6 +61,9 @@ trait ToonEncoderService {
     *   A ZIO effect that produces the encoded string (infallible)
     */
   def encode(value: ToonValue): UIO[String]
+
+  /** Expose encoder configuration for clients needing structural info (e.g., streaming encoders). */
+  def config: EncoderConfig
 }
 
 object ToonEncoderService {

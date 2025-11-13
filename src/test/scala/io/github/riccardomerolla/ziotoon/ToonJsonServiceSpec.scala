@@ -59,7 +59,23 @@ object ToonJsonServiceSpec extends ZIOSpecDefault {
         for {
           json <- ToonJsonService.toPrettyJson(value)
         } yield assertTrue(json.contains("\n"))
-      }.provideLayer(ToonJsonService.live)
+      }.provideLayer(ToonJsonService.live),
+      test("respects indent configuration") {
+        val value = obj("user" -> obj("name" -> str("Mallory")))
+        for {
+          defaultIndent <- ToonJsonService.toPrettyJson(value, indent = 2)
+          compact       <- ToonJsonService.toPrettyJson(value, indent = 0)
+        } yield assertTrue(
+          defaultIndent.contains("  \"user\"") &&
+          !compact.contains("\n")
+        )
+      }.provideLayer(ToonJsonService.live),
+      test("supports custom indent width") {
+        val value = obj("data" -> obj("nested" -> obj("value" -> num(1))))
+        for {
+          indented <- ToonJsonService.toPrettyJson(value, indent = 4)
+        } yield assertTrue(indented.contains("    \"data\""))
+      }.provideLayer(ToonJsonService.live),
     ),
     suite("Token savings calculation")(
       test("calculate savings for simple object") {

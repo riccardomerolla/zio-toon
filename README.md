@@ -431,6 +431,7 @@ object ToonError {
   case class IndentationError(message: String, line: Int) extends ToonError
   case class MissingColon(line: Int) extends ToonError
   case class InvalidEscape(message: String, line: Int) extends ToonError
+  case class InvalidNumber(value: String, line: Int) extends ToonError
   case class UnterminatedString(line: Int) extends ToonError
   case class CountMismatch(expected: Int, actual: Int, field: String, line: Int) extends ToonError
   case class WidthMismatch(expected: Int, actual: Int, line: Int) extends ToonError
@@ -449,8 +450,7 @@ case class EncoderConfig(
 // Decoder configuration  
 case class DecoderConfig(
   strictMode: Boolean = true,       // Enforce strict indentation
-  indentSize: Int = 2,              // Expected spaces per level
-  expandPaths: PathExpansion = PathExpansion.Off  // Path expansion mode
+  indentSize: Int = 2               // Expected spaces per level
 )
 ```
 
@@ -592,4 +592,3 @@ MIT License - see LICENSE file for details.
 - [TOON Specification](https://github.com/toon-format/spec)
 - [ZIO Documentation](https://zio.dev)
 - [Scala 3 Documentation](https://docs.scala-lang.org/scala3/)
-

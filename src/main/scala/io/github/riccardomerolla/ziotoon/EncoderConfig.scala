@@ -14,8 +14,7 @@ package io.github.riccardomerolla.ziotoon
   * // Custom configuration
   * val customConfig = EncoderConfig(
   *   indentSize = 4,
-  *   delimiter = Delimiter.Tab,
-  *   keyFolding = KeyFolding.Safe
+  *   delimiter = Delimiter.Tab
   * )
   *
   * // Use with encoder
@@ -29,13 +28,10 @@ package io.github.riccardomerolla.ziotoon
   *   Number of spaces per indentation level (default: 2)
   * @param delimiter
   *   Document delimiter for arrays (comma, tab, or pipe)
-  * @param keyFolding
-  *   Whether to enable key folding (default: off)
   */
 final case class EncoderConfig(
     indentSize: Int = 2,
     delimiter: Delimiter = Delimiter.Comma,
-    keyFolding: KeyFolding = KeyFolding.Off,
   )
 
 object EncoderConfig {
@@ -44,7 +40,6 @@ object EncoderConfig {
     *
     *   - 2-space indentation
     *   - Comma delimiter
-    *   - Key folding off
     */
   val default: EncoderConfig = EncoderConfig()
 }
@@ -77,17 +72,4 @@ enum Delimiter(val char: Char, val symbol: String) {
 
   /** Check if this is a comma delimiter. */
   def isComma: Boolean = this == Comma
-}
-
-/** Key folding options for encoder.
-  *
-  * Key folding can reduce token usage by omitting quotes when safe.
-  */
-enum KeyFolding {
-
-  /** No key folding (always quote when needed) */
-  case Off
-
-  /** Safe key folding (omit quotes for valid identifiers) */
-  case Safe
 }

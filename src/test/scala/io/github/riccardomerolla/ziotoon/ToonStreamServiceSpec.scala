@@ -90,6 +90,21 @@ object ToonStreamServiceSpec extends ZIOSpecDefault {
           decoded <- ToonStreamService.decodeStream(input).runCollect
         } yield assertTrue(decoded.isEmpty)
       }.provideLayer(layers),
+      test("decode line stream splits on blank lines") {
+        val lines = ZStream(
+          "name: Alice",
+          "",
+          "name: Bob",
+        )
+
+        for {
+          decoded <- ToonStreamService.decodeLineStream(lines).runCollect
+        } yield assertTrue(
+          decoded.length == 2 &&
+          decoded(0) == obj("name" -> str("Alice")) &&
+          decoded(1) == obj("name" -> str("Bob"))
+        )
+      }.provideLayer(layers),
     ),
     suite("Round-trip Streams")(
       test("round-trip stream preserves values") {
@@ -146,6 +161,13 @@ object ToonStreamServiceSpec extends ZIOSpecDefault {
         } yield assertTrue(
           decoded == obj("items" -> arr(str("x"), str("y"), str("z")))
         )
+      }.provideLayer(layers),
+      test("array stream emits unknown length header") {
+        val elements = ZStream(num(1), num(2))
+
+        for {
+          encoded <- ToonStreamService.encodeArrayStream(elements, Some("items")).runCollect
+        } yield assertTrue(encoded.mkString.contains("[?"))
       }.provideLayer(layers),
     ),
     suite("Performance")(

@@ -3,6 +3,7 @@ package io.github.riccardomerolla.ziotoon
 import zio.test._
 import zio.test.Assertion._
 
+import ToonError._
 import ToonValue._
 
 object ToonDecoderSpec extends ZIOSpecDefault {
@@ -34,6 +35,11 @@ object ToonDecoderSpec extends ZIOSpecDefault {
         val result = ToonDecoder.decode(input)
         assertTrue(result == Right(Null))
       },
+      test("fail on invalid number literal") {
+        val input  = "1e99999"
+        val result = ToonDecoder.decode(input)
+        assertTrue(result == Left(InvalidNumber("1e99999", 1)))
+      },
     ),
     suite("Objects")(
       test("decode simple object") {
@@ -63,6 +69,22 @@ age: 30"""
     suite("Arrays")(
       test("decode empty array") {
         val input  = "[0]:"
+        val result = ToonDecoder.decode(input)
+        assertTrue(result == Right(arr()))
+      },
+      test("decode array with unknown length header") {
+        val input  =
+          s"""[?]:
+             |  - 1
+             |  - 2
+             |""".stripMargin
+        val result = ToonDecoder.decode(input)
+        assertTrue(result == Right(arr(num(1), num(2))))
+      },
+      test("decode empty array with unknown length header") {
+        val input  =
+          s"""[?]:
+             |""".stripMargin
         val result = ToonDecoder.decode(input)
         assertTrue(result == Right(arr()))
       },
