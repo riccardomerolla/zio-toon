@@ -43,6 +43,21 @@ lazy val root = (project in file("."))
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )
 
+lazy val cli = (project in file("cli"))
+  .dependsOn(root)
+  .settings(
+    name := "zio-toon-cli",
+    publish / skip := true,
+    Compile / scalaSource := baseDirectory.value / "src" / "main" / "scala",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio-cli" % "0.7.4",
+      "com.knuddels" % "jtokkit" % "1.0.0",
+      "dev.zio" %% "zio-test" % "2.1.22" % Test,
+      "dev.zio" %% "zio-test-sbt" % "2.1.22" % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+  )
+
 // Benchmark subproject with JMH
 lazy val benchmarks = (project in file("benchmarks"))
   .enablePlugins(JmhPlugin)
@@ -54,5 +69,3 @@ lazy val benchmarks = (project in file("benchmarks"))
       "dev.zio" %% "zio" % "2.1.22"
     )
   )
-
-

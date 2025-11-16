@@ -391,6 +391,7 @@ trait ToonStreamService {
   def decodeStream(input: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonValue]
   def encodeArrayStream(elements: ZStream[Any, Nothing, ToonValue], key: Option[String]): ZStream[Any, Nothing, String]
   def decodeLineStream(lines: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonValue]
+  def tabularRowStream(lines: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonStreaming.TabularRow]
   def roundTripStream(values: ZStream[Any, Nothing, ToonValue]): ZStream[Any, ToonError, ToonValue]
 }
 ```
@@ -484,6 +485,22 @@ val schemaLayer = ToonJsonService.live >>> ToonSchemaService.live
 val streamLayer = 
   (ToonEncoderService.live ++ ToonDecoderService.live) >+> ToonStreamService.live
 
+### Command-line Interface
+
+A lightweight CLI is available under `cli/`. Run `sbt "cli/run --help"` for the full reference. The most common flows:
+
+```bash
+# Encode JSON -> TOON with stats
+sbt "cli/run --encode --stats data.json"
+
+# Decode TOON -> JSON with lenient parsing
+sbt "cli/run --decode --lenient input.toon --output decoded.json"
+
+# Optimize delimiter and tokenizer-aware savings
+sbt "cli/run --encode --optimize --tokenizer p50k payload.json"
+```
+
+The CLI shares the core encoder/decoder implementation, supports tokenizer-aware stats via jtokkit, and can automatically pick the most token-efficient delimiter for a payload.
 // Decoder guard-rail profiles
 val untrustedInputLayer = ToonDecoderService.hardened    // strict + depth/size caps
 val trustedInputLayer   = ToonDecoderService.trusted     // lenient + guard rails off
