@@ -105,7 +105,7 @@ object Main extends ZIOAppDefault {
   private[cli] val cliApp: CliApp[ToonJsonService, String, Unit] =
     CliApp.make[ToonJsonService, String, CliAction, Unit](
       name = "zio-toon",
-      version = "0.1.0",
+      version = "0.2.0",
       summary = Span.text("TOON CLI"),
       command = encodeCommand orElse decodeCommand,
     ) {
