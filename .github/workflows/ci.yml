@@ -49,11 +49,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
         with:
-          distribution: 'temurin'
           java-version: '21'
+          distribution: 'graalvm'
+          components: 'native-image'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'sbt'
 
       - name: Setup SBT
@@ -73,6 +75,25 @@ jobs:
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
 
+      - name: Build CLI native image
+        run: sbt --batch --no-colors cliNativeImage
+
+      - name: Package CLI native binary
+        run: |
+          set -euo pipefail
+          ARCHIVE_NAME="zio-toon-cli-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
+          ARCHIVE_PATH="cli/target/${ARCHIVE_NAME}"
+          DIST_DIR="cli/target/native-dist"
+          mkdir -p "${DIST_DIR}"
+          BIN_PATH=$(find cli/target -path "*native-image*" -type f -name "zio-toon-cli" -perm -111 | head -n 1 || true)
+          if [ -z "${BIN_PATH}" ]; then
+            echo "Failed to locate native binary under cli/target"
+            exit 1
+          fi
+          cp "${BIN_PATH}" "${DIST_DIR}/"
+          tar -C "${DIST_DIR}" -czf "${ARCHIVE_PATH}" "zio-toon-cli"
+          echo "CLI_NATIVE_ARCHIVE=${ARCHIVE_PATH}" >> $GITHUB_ENV
+
       - name: Create GitHub Release
         if: success()
         uses: ncipollo/release-action@v1
@@ -80,4 +101,5 @@ jobs:
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body: "See CHANGELOG.md for detailed release notes."
+          artifacts: ${{ env.CLI_NATIVE_ARCHIVE }}
           token: ${{ secrets.GITHUB_TOKEN }}

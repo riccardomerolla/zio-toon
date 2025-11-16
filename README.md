@@ -491,16 +491,30 @@ A lightweight CLI is available under `cli/`. Run `sbt "cli/run --help"` for the 
 
 ```bash
 # Encode JSON -> TOON with stats
-sbt "cli/run --encode --stats data.json"
+sbt "cli/run encode --stats true data.json"
 
 # Decode TOON -> JSON with lenient parsing
-sbt "cli/run --decode --lenient input.toon --output decoded.json"
+sbt "cli/run decode --strict false --output decoded.json input.toon"
 
 # Optimize delimiter and tokenizer-aware savings
-sbt "cli/run --encode --optimize --tokenizer p50k payload.json"
+sbt "cli/run encode --optimize --tokenizer p50k payload.json"
 ```
 
 The CLI shares the core encoder/decoder implementation, supports tokenizer-aware stats via jtokkit, and can automatically pick the most token-efficient delimiter for a payload.
+
+#### Native binary
+
+For zero-dependency environments you can build a GraalVM native image of the CLI.
+
+```bash
+# Install GraalVM 21 with the native-image component, then run:
+sbt cliNativeImage
+
+# The binary will be produced under cli/target/graalvm-native-image/
+./cli/target/graalvm-native-image/cli/zio-toon-cli encode --stats true samples/request.json
+```
+
+Tagged releases attach the prebuilt Linux x86_64 binary as well, so you can download it directly from the GitHub release page if you prefer not to build it locally.
 // Decoder guard-rail profiles
 val untrustedInputLayer = ToonDecoderService.hardened    // strict + depth/size caps
 val trustedInputLayer   = ToonDecoderService.trusted     // lenient + guard rails off

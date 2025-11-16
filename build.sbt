@@ -45,6 +45,7 @@ lazy val root = (project in file("."))
 
 lazy val cli = (project in file("cli"))
   .dependsOn(root)
+  .enablePlugins(GraalVMNativeImagePlugin)
   .settings(
     name := "zio-toon-cli",
     publish / skip := true,
@@ -55,8 +56,16 @@ lazy val cli = (project in file("cli"))
       "dev.zio" %% "zio-test" % "2.1.22" % Test,
       "dev.zio" %% "zio-test-sbt" % "2.1.22" % Test
     ),
-    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    Compile / mainClass := Some("io.github.riccardomerolla.ziotoon.cli.Main"),
+    graalVMNativeImageOptions ++= Seq(
+      "--no-fallback",
+      "--install-exit-handlers",
+      "-H:IncludeResources=.*\\.tiktoken"
+    )
   )
+
+addCommandAlias("cliNativeImage", "cli/graalvm-native-image:packageBin")
 
 // Benchmark subproject with JMH
 lazy val benchmarks = (project in file("benchmarks"))
