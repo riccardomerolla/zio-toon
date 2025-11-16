@@ -1,11 +1,10 @@
 package io.github.riccardomerolla.ziotoon
 
-import scala.collection.immutable.VectorMap
-
 import zio.Chunk
 
 import ToonError._
 import ToonValue._
+import scala.collection.immutable.VectorMap
 
 /** Decoder for parsing TOON format strings into ToonValue.
   *
@@ -144,9 +143,9 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
             asDouble match {
               case Some(value) if value.isInfinity || value.isNaN =>
                 Left(InvalidNumber(numeric, lineNumber))
-              case None                                          =>
+              case None                                           =>
                 Left(InvalidNumber(numeric, lineNumber))
-              case _                                             =>
+              case _                                              =>
                 Right(Num(big))
             }
           }
@@ -500,7 +499,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     content match {
       case ArrayPattern(key, lengthStr, delimSymbol, fieldList, values) =>
         parseDeclaredLength(lengthStr, line.lineNumber) match {
-          case Left(error)   => (Left(error), 1)
+          case Left(error)      => (Left(error), 1)
           case Right(lengthOpt) =>
             val delimiter = parseDelimiter(delimSymbol)
             parseArrayByFormat(lines, startIdx, lengthOpt, delimiter, fieldList, values, line)
@@ -656,7 +655,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     config.maxArrayLength match {
       case Some(limit) if length > limit =>
         Left(ArrayLengthLimitExceeded(limit, length, context, lineNumber))
-      case _ => Right(())
+      case _                             => Right(())
     }
 
   private def ensureDepthWithinLimit(depth: Int, lineNumber: Int): Either[ToonError, Unit] =

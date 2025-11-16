@@ -1,8 +1,8 @@
 package io.github.riccardomerolla.ziotoon
 
-import scala.collection.immutable.VectorMap
-
 import zio.Chunk
+
+import scala.collection.immutable.VectorMap
 
 /** Core data model for TOON values, representing the JSON data model as specified in the TOON specification.
   *
@@ -71,8 +71,8 @@ object ToonValue {
 
   /** Object value - ordered map from string keys to ToonValue */
   final case class Obj(fields: VectorMap[String, ToonValue]) extends ToonValue {
-    def toMap: Map[String, ToonValue]          = fields.toMap
-    def toChunk: Chunk[(String, ToonValue)]    = Chunk.fromIterable(fields)
+    def toMap: Map[String, ToonValue]           = fields.toMap
+    def toChunk: Chunk[(String, ToonValue)]     = Chunk.fromIterable(fields)
     def iterator: Iterator[(String, ToonValue)] = fields.iterator
   }
 

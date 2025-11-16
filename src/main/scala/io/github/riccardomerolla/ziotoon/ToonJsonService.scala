@@ -1,10 +1,10 @@
 package io.github.riccardomerolla.ziotoon
 
-import scala.collection.immutable.VectorMap
-
 import zio._
 import zio.json._
 import zio.json.ast.Json
+
+import scala.collection.immutable.VectorMap
 
 /** Result of token savings calculation between JSON and TOON formats.
   *

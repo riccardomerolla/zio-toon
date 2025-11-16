@@ -1,12 +1,11 @@
 package io.github.riccardomerolla.ziotoon
 
-import scala.collection.immutable.VectorMap
-
 import zio._
 import zio.test._
 import zio.test.Gen._
 
 import ToonValue._
+import scala.collection.immutable.VectorMap
 
 /** Property-based tests for TOON encoding/decoding following ZIO best practices.
   *
@@ -43,10 +42,12 @@ object ToonPropertySpec extends ZIOSpecDefault {
       case (Null, Null)                     => true
       case (Obj(fields1), Obj(fields2))     =>
         fields1.size == fields2.size &&
-        fields1.iterator
+        fields1
+          .iterator
           .zip(fields2.iterator)
-          .forall { case ((k1, v1), (k2, v2)) =>
-            k1 == k2 && approximatelyEqual(v1, v2, tolerance)
+          .forall {
+            case ((k1, v1), (k2, v2)) =>
+              k1 == k2 && approximatelyEqual(v1, v2, tolerance)
           }
       case (Arr(elements1), Arr(elements2)) =>
         elements1.size == elements2.size &&

@@ -112,7 +112,7 @@ age: 30"""
     ),
     suite("Guard rails")(
       test("fail when depth exceeds configured limit") {
-        val input =
+        val input  =
           """root:
   child:
     leaf: 1"""

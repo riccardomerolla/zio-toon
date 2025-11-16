@@ -51,6 +51,24 @@ object ToonZIOSpec extends ZIOSpecDefault {
           decoded <- ToonDecoderService.decode(input)
         } yield assertTrue(decoded == obj("test" -> str("value")))
       }.provideLayer(ToonDecoderService.configured(DecoderConfig(strictMode = false))),
+      test("provide hardened and trusted guard-rail profiles") {
+        val maxLength = ToonDecoderService.hardenedConfig.maxStringLength.get
+        val payload   = "name: " + "a" * (maxLength + 1000)
+        val expected  = obj("name" -> str("a" * (maxLength + 1000)))
+
+        for {
+          hardenedResult <- ToonDecoderService.decode(payload).either.provideLayer(ToonDecoderService.hardened)
+          trustedResult  <- ToonDecoderService.decode(payload).either.provideLayer(ToonDecoderService.trusted)
+        } yield {
+          val hardenedRejected = hardenedResult match {
+            case Left(ToonError.StringTooLong(limit, actual, line)) =>
+              limit == maxLength && actual == maxLength + 1000 && line == 1
+            case _                                                  => false
+          }
+          val trustedAccepted  = trustedResult.contains(expected)
+          assertTrue(hardenedRejected, trustedAccepted)
+        }
+      },
     ),
     suite("Toon API with services")(
       test("encode with service from environment") {

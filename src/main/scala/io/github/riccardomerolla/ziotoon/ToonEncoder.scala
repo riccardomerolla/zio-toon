@@ -1,8 +1,8 @@
 package io.github.riccardomerolla.ziotoon
 
-import java.math.{ BigDecimal as JBigDecimal }
-
 import zio.Chunk
+
+import java.math.BigDecimal as JBigDecimal
 
 import ToonValue._
 
@@ -69,15 +69,17 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
   /** Encode root-level object (no indentation for first level fields).
     */
   private def encodeRootObject(obj: Obj): Chunk[String] =
-    obj.toChunk.flatMap { case (key, value) =>
-      encodeField(key, value, 0)
+    obj.toChunk.flatMap {
+      case (key, value) =>
+        encodeField(key, value, 0)
     }
 
   /** Encode an object at a given depth.
     */
   private def encodeObject(obj: Obj, depth: Int): Chunk[String] =
-    obj.toChunk.flatMap { case (key, value) =>
-      encodeField(key, value, depth)
+    obj.toChunk.flatMap {
+      case (key, value) =>
+        encodeField(key, value, depth)
     }
 
   /** Encode a field (key-value pair) at a given depth.

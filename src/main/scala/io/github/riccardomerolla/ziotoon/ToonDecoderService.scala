@@ -64,6 +64,22 @@ trait ToonDecoderService {
 
 object ToonDecoderService {
 
+  private val HardenedProfile: DecoderConfig = DecoderConfig(
+    strictMode = true,
+    indentSize = 2,
+    maxDepth = Some(128),
+    maxArrayLength = Some(5000),
+    maxStringLength = Some(20000),
+  )
+
+  private val TrustedProfile: DecoderConfig = DecoderConfig(
+    strictMode = false,
+    indentSize = 2,
+    maxDepth = None,
+    maxArrayLength = None,
+    maxStringLength = None,
+  )
+
   /** Live implementation of ToonDecoderService.
     *
     * This implementation:
@@ -94,6 +110,28 @@ object ToonDecoderService {
     */
   val live: ULayer[ToonDecoderService] =
     ZLayer.succeed(Live(DecoderConfig.default))
+
+  /** Hardened decoder profile suitable for untrusted or user-provided payloads.
+    *
+    * This layer keeps strict parsing enabled and applies defensive limits for depth, array length, and string size to
+    * mitigate resource exhaustion attempts while keeping reasonable headroom for normal requests.
+    */
+  val hardened: ULayer[ToonDecoderService] =
+    ZLayer.succeed(Live(HardenedProfile))
+
+  /** Trusted decoder profile for internal or pre-validated payloads.
+    *
+    * Strict mode is disabled and guard-rail limits are lifted to favor compatibility when you already trust the source
+    * of the TOON document (e.g., intra-service communication).
+    */
+  val trusted: ULayer[ToonDecoderService] =
+    ZLayer.succeed(Live(TrustedProfile))
+
+  /** Expose the hardened profile configuration for advanced wiring scenarios. */
+  val hardenedConfig: DecoderConfig = HardenedProfile
+
+  /** Expose the trusted profile configuration for advanced wiring scenarios. */
+  val trustedConfig: DecoderConfig = TrustedProfile
 
   /** ZLayer that provides a ToonDecoderService with custom configuration.
     *

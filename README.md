@@ -460,6 +460,10 @@ case class DecoderConfig(
   maxArrayLength: Option[Int] = Some(100000),// Guard against huge arrays
   maxStringLength: Option[Int] = Some(1000000) // Guard against oversized strings
 )
+
+// Predefined guard-rail layers
+val hardenedDecoder = ToonDecoderService.hardened  // strict + depth/size caps for untrusted input
+val trustedDecoder  = ToonDecoderService.trusted   // lenient + unlimited sizes for internal data
 ```
 
 ### Layers
@@ -479,6 +483,10 @@ val schemaLayer = ToonJsonService.live >>> ToonSchemaService.live
 // With streaming
 val streamLayer = 
   (ToonEncoderService.live ++ ToonDecoderService.live) >+> ToonStreamService.live
+
+// Decoder guard-rail profiles
+val untrustedInputLayer = ToonDecoderService.hardened    // strict + depth/size caps
+val trustedInputLayer   = ToonDecoderService.trusted     // lenient + guard rails off
 
 // Complete integration
 val fullLayer = 
