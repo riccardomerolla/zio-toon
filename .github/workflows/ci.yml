@@ -76,5 +76,5 @@ jobs:
         with:
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
-          generateReleaseNotes: true
+          body: "See CHANGELOG.md for detailed release notes."
           token: ${{ secrets.GITHUB_TOKEN }}
