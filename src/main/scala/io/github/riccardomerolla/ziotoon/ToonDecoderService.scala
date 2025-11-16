@@ -49,6 +49,9 @@ import zio._
   */
 trait ToonDecoderService {
 
+  /** Decoder configuration backing this service instance. */
+  def config: DecoderConfig
+
   /** Decode a TOON format string into a ToonValue.
     *
     * This is an effect that describes the decoding operation. The actual decoding is deferred until the effect is

@@ -1,6 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
 import zio._
+import zio.Chunk
 import zio.stream._
 import zio.test._
 import zio.test.Assertion._
@@ -55,6 +56,34 @@ object ToonStreamServiceSpec extends ZIOSpecDefault {
           encoded.length == 3 &&
           encoded.forall(_.contains("name:"))
         )
+      }.provideLayer(layers),
+    ),
+    suite("Tabular streaming")(
+      test("tabularRowStream emits rows incrementally") {
+        val lines = ZStream(
+          "users[2]{id,name,role}:",
+          "  1,Alice,admin",
+          "  2,Bob,user",
+        )
+
+        for {
+          rows <- ToonStreamService.tabularRowStream(lines).runCollect
+        } yield assertTrue(
+          rows.length == 2,
+          rows.head.fields == Chunk("id", "name", "role"),
+          rows.head.values == Chunk("1", "Alice", "admin"),
+          rows(1).values == Chunk("2", "Bob", "user"),
+        )
+      }.provideLayer(layers),
+      test("tabularRowStream enforces strict widths") {
+        val lines = ZStream(
+          "users[1]{id,name}:",
+          "  1,Alice,extra",
+        )
+
+        for {
+          exit <- ToonStreamService.tabularRowStream(lines).runCollect.exit
+        } yield assert(exit)(fails(isSubtype[ToonError.WidthMismatch](anything)))
       }.provideLayer(layers),
     ),
     suite("Decoding Streams")(

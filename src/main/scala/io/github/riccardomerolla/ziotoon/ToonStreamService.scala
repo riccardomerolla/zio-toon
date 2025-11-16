@@ -81,6 +81,18 @@ trait ToonStreamService {
     */
   def decodeLineStream(lines: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonValue]
 
+  /** Stream tabular array rows without materializing entire documents.
+    *
+    * Parses headers such as `users[3]{id,name}:` and emits each following row with its field metadata. Useful for
+    * analytics pipelines that only need the tabular data.
+    *
+    * @param lines
+    *   Stream of TOON lines
+    * @return
+    *   Stream of tabular rows with field metadata
+    */
+  def tabularRowStream(lines: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonStreaming.TabularRow]
+
   /** Transform a stream through TOON round-trip (encode then decode).
     *
     * Useful for validation or normalization of ToonValue streams.
@@ -139,6 +151,9 @@ object ToonStreamService {
         .map(_.mkString("\n"))
         .mapZIO(doc => decoderService.decode(doc))
 
+    def tabularRowStream(lines: ZStream[Any, Nothing, String]): ZStream[Any, ToonError, ToonStreaming.TabularRow] =
+      ToonStreaming.tabularRows(lines, decoderService.config)
+
     def roundTripStream(
         values: ZStream[Any, Nothing, ToonValue]
       ): ZStream[Any, ToonError, ToonValue] =
@@ -180,6 +195,13 @@ object ToonStreamService {
       lines: ZStream[Any, Nothing, String]
     ): ZStream[ToonStreamService, ToonError, ToonValue] =
     ZStream.serviceWithStream[ToonStreamService](_.decodeLineStream(lines))
+
+  /** Accessor method for tabularRowStream.
+    */
+  def tabularRowStream(
+      lines: ZStream[Any, Nothing, String]
+    ): ZStream[ToonStreamService, ToonError, ToonStreaming.TabularRow] =
+    ZStream.serviceWithStream[ToonStreamService](_.tabularRowStream(lines))
 
   /** Accessor method for roundTripStream.
     */
