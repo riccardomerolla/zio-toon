@@ -1,5 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
+import scala.collection.immutable.VectorMap
+
 import zio.Chunk
 
 import ToonError._
@@ -29,8 +31,11 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     */
   private def unquoteKey(key: String, lineNumber: Int): Either[ToonError, String] =
     if (key.startsWith("\"") && key.endsWith("\""))
-      unescape(key.substring(1, key.length - 1)).left.map(msg => InvalidEscape(msg, lineNumber))
-    else Right(key)
+      unescape(key.substring(1, key.length - 1))
+        .left
+        .map(msg => InvalidEscape(msg, lineNumber))
+        .flatMap(value => ensureStringWithinLimit(value, lineNumber))
+    else ensureStringWithinLimit(key, lineNumber)
 
   /** Decode a TOON format string into a ToonValue.
     *
@@ -90,7 +95,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
           )
         }
         else {
-          Right(Some(Line(lineText.trim, depth, idx + 1, indent)))
+          ensureDepthWithinLimit(depth, idx + 1).map(_ => Line(lineText.trim, depth, idx + 1, indent)).map(Some(_))
         }
       }
 
@@ -120,6 +125,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
           unescape(quoted.substring(1, quoted.length - 1))
             .left
             .map(msg => InvalidEscape(msg, lineNumber))
+            .flatMap(value => ensureStringWithinLimit(value, lineNumber))
             .map(Str.apply)
 
       case "null"  => Right(Null)
@@ -129,16 +135,24 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       case numeric if numeric.matches("^-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$") =>
         scala
           .util
-          .Try(numeric.toDouble)
+          .Try(BigDecimal(numeric))
           .toEither
           .left
           .map(_ => InvalidNumber(numeric, lineNumber))
-          .flatMap { value =>
-            if (value.isInfinity || value.isNaN) Left(InvalidNumber(numeric, lineNumber))
-            else Right(Num(value))
+          .flatMap { big =>
+            val asDouble = scala.util.Try(numeric.toDouble).toOption
+            asDouble match {
+              case Some(value) if value.isInfinity || value.isNaN =>
+                Left(InvalidNumber(numeric, lineNumber))
+              case None                                          =>
+                Left(InvalidNumber(numeric, lineNumber))
+              case _                                             =>
+                Right(Num(big))
+            }
           }
 
-      case other => Right(Str(other))
+      case other =>
+        ensureStringWithinLimit(other, lineNumber).map(Str.apply)
     }
   }
 
@@ -152,7 +166,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     def loop(idx: Int, fields: List[(String, ToonValue)]): (Either[ToonError, Obj], Int) =
       if (idx >= lines.length || lines(idx).depth < startDepth) {
         // Done - return accumulated fields
-        (Right(Obj(Chunk.fromIterable(fields))), idx - startIdx)
+        (Right(Obj(VectorMap.from(fields))), idx - startIdx)
       }
       else if (lines(idx).depth > startDepth) {
         // Skip deeper nested content (should be handled by recursive calls)
@@ -359,7 +373,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
         for {
           unquotedKey <- unquoteKey(keyPart.trim, line.lineNumber)
           delimiter    = parseDelimiter(delimSymbol)
-          lengthOpt    = parseDeclaredLength(lengthStr)
+          lengthOpt   <- parseDeclaredLength(lengthStr, line.lineNumber)
           result      <-
             parseArrayContent(
               lines,
@@ -385,8 +399,18 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     else if (delimSymbol == "|") Delimiter.Pipe
     else Delimiter.Comma
 
-  private def parseDeclaredLength(lengthStr: String): Option[Int] =
-    if (lengthStr == "?") None else Some(lengthStr.toInt)
+  private def parseDeclaredLength(lengthStr: String, lineNumber: Int): Either[ToonError, Option[Int]] =
+    if (lengthStr == "?") Right(None)
+    else
+      scala
+        .util
+        .Try(lengthStr.toInt)
+        .toEither
+        .left
+        .map(_ => ParseError(s"Invalid array length '$lengthStr' at line $lineNumber"))
+        .flatMap { length =>
+          ensureArrayLimit(length, "array declaration", lineNumber).map(_ => Some(length))
+        }
 
   /** Parse array content based on format. Pure function routing to specific array parsers.
     */
@@ -413,7 +437,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     }
     else if (lengthOpt.contains(0)) {
       // Empty array
-      Right((List((key, Arr.empty)), 1))
+      validateArrayConstraints(lengthOpt, 0, "array", lineNumber).map(_ => (List((key, Arr.empty)), 1))
     }
     else {
       // List array
@@ -443,34 +467,17 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     // Extract key and array part
     val headerMatch = """^(.+?)\[(\d+|\?)([|\t]?)\](?:\{(.+?)\})?:\s*(.*)$""".r
     content match {
-      case headerMatch(keyPart, lengthStr, delimSymbol, fieldList, values) =>
-        val key         = keyPart.trim
-        val unquotedKey = if (key.startsWith("\"") && key.endsWith("\"")) {
-          unescape(key.substring(1, key.length - 1)) match {
-            case Left(msg) => return Left(InvalidEscape(msg, lineNumber))
-            case Right(k)  => k
-          }
-        }
-        else {
-          key
-        }
-
-        val lengthOpt = parseDeclaredLength(lengthStr)
-        val delimiter =
-          if (delimSymbol == "\t") Delimiter.Tab
-          else if (delimSymbol == "|") Delimiter.Pipe
-          else Delimiter.Comma
-
-        if (values.nonEmpty) {
-          // Inline array
-          parseInlineArrayValues(values, delimiter, lengthOpt, lineNumber).map { arr =>
-            (unquotedKey, arr)
-          }
-        }
-        else {
-          // Empty array or needs child lines (not supported in this method)
-          Right((unquotedKey, Arr.empty))
-        }
+      case headerMatch(keyPart, lengthStr, delimSymbol, _, values) =>
+        for {
+          unquotedKey <- unquoteKey(keyPart.trim, lineNumber)
+          lengthOpt   <- parseDeclaredLength(lengthStr, lineNumber)
+          delimiter    = parseDelimiter(delimSymbol)
+          result      <-
+            if (values.nonEmpty)
+              parseInlineArrayValues(values, delimiter, lengthOpt, lineNumber).map(arr => (unquotedKey, arr))
+            else
+              validateArrayConstraints(lengthOpt, 0, "array", lineNumber).map(_ => (unquotedKey, Arr.empty))
+        } yield result
 
       case _ =>
         Left(ParseError(s"Invalid array format at line $lineNumber"))
@@ -492,10 +499,12 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
 
     content match {
       case ArrayPattern(key, lengthStr, delimSymbol, fieldList, values) =>
-        val lengthOpt = parseDeclaredLength(lengthStr)
-        val delimiter = parseDelimiter(delimSymbol)
-
-        parseArrayByFormat(lines, startIdx, lengthOpt, delimiter, fieldList, values, line)
+        parseDeclaredLength(lengthStr, line.lineNumber) match {
+          case Left(error)   => (Left(error), 1)
+          case Right(lengthOpt) =>
+            val delimiter = parseDelimiter(delimSymbol)
+            parseArrayByFormat(lines, startIdx, lengthOpt, delimiter, fieldList, values, line)
+        }
 
       case _ =>
         (Left(ParseError(s"Invalid array header at line ${line.lineNumber}")), 1)
@@ -583,9 +592,10 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
 
     content match {
       case headerPattern(lengthStr, delimSymbol, values) =>
-        val length    = parseDeclaredLength(lengthStr)
-        val delimiter = parseDelimiter(delimSymbol)
-        Right((length, delimiter, values))
+        parseDeclaredLength(lengthStr, lineNumber).map { length =>
+          val delimiter = parseDelimiter(delimSymbol)
+          (length, delimiter, values)
+        }
 
       case _ =>
         Left(ParseError(s"Invalid inline array format at line $lineNumber"))
@@ -602,16 +612,30 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
     ): Either[ToonError, Arr] = {
     // Handle empty array case early
     if (values.isEmpty && expectedLength.contains(0)) {
-      return Right(Arr.empty)
+      return validateArrayConstraints(expectedLength, 0, "inline array", lineNumber).map(_ => Arr.empty)
     }
 
     val split = splitByDelimiter(values, delimiter.char)
 
     for {
-      _          <- validateExpectedCount(expectedLength, split.length, "inline array", lineNumber)
+      _          <- validateArrayConstraints(expectedLength, split.length, "inline array", lineNumber)
       primitives <- parseArrayPrimitives(split, lineNumber)
     } yield Arr(Chunk.fromIterable(primitives))
   }
+
+  private def validateArrayConstraints(
+      expectedLength: Option[Int],
+      actualLength: Int,
+      arrayType: String,
+      lineNumber: Int,
+    ): Either[ToonError, Unit] =
+    for {
+      _ <- ensureArrayLimit(actualLength, arrayType, lineNumber)
+      _ <- expectedLength match {
+             case Some(expected) => validateArrayLength(actualLength, expected, arrayType, lineNumber)
+             case None           => Right(())
+           }
+    } yield ()
 
   /** Validate array length matches expected length in strict mode. Extracted validation logic.
     */
@@ -628,15 +652,23 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       Right(())
     }
 
-  private def validateExpectedCount(
-      expectedLength: Option[Int],
-      actualLength: Int,
-      arrayType: String,
-      lineNumber: Int,
-    ): Either[ToonError, Unit] =
-    expectedLength match {
-      case Some(expected) => validateArrayLength(actualLength, expected, arrayType, lineNumber)
-      case None           => Right(())
+  private def ensureArrayLimit(length: Int, context: String, lineNumber: Int): Either[ToonError, Unit] =
+    config.maxArrayLength match {
+      case Some(limit) if length > limit =>
+        Left(ArrayLengthLimitExceeded(limit, length, context, lineNumber))
+      case _ => Right(())
+    }
+
+  private def ensureDepthWithinLimit(depth: Int, lineNumber: Int): Either[ToonError, Unit] =
+    config.maxDepth match {
+      case Some(limit) if depth > limit => Left(DepthLimitExceeded(limit, lineNumber))
+      case _                            => Right(())
+    }
+
+  private def ensureStringWithinLimit(value: String, lineNumber: Int): Either[ToonError, String] =
+    config.maxStringLength match {
+      case Some(limit) if value.length > limit => Left(StringTooLong(limit, value.length, lineNumber))
+      case _                                   => Right(value)
     }
 
   /** Parse array of primitive values. Extracted parsing logic using foldLeft.
@@ -713,7 +745,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
               fieldValuesResult match {
                 case Left(error)        => (Left(error), idx - startIdx)
                 case Right(fieldValues) =>
-                  val row = Obj(Chunk.fromIterable(fieldValues))
+                  val row = Obj(VectorMap.from(fieldValues))
                   parseRows(idx + 1, rows :+ row)
               }
             }
@@ -727,7 +759,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
           case Left(error) => (Left(error), consumed)
           case Right(rows) =>
             val lineNumber = if (startIdx < lines.length) lines(startIdx).lineNumber else headerLineNumber
-            validateExpectedCount(expectedLength, rows.length, "tabular array", lineNumber) match {
+            validateArrayConstraints(expectedLength, rows.length, "tabular array", lineNumber) match {
               case Left(err) => (Left(err), consumed)
               case Right(_)  => (Right(Arr(Chunk.fromIterable(rows))), consumed)
             }
@@ -766,7 +798,7 @@ class ToonDecoder(config: DecoderConfig = DecoderConfig.default) {
       case Left(error)  => (Left(error), consumed)
       case Right(items) =>
         val lineNumber = if (startIdx < lines.length) lines(startIdx).lineNumber else headerLineNumber
-        validateExpectedCount(expectedLength, items.length, "list array", lineNumber) match {
+        validateArrayConstraints(expectedLength, items.length, "list array", lineNumber) match {
           case Left(err) => (Left(err), consumed)
           case Right(_)  => (Right(Arr(Chunk.fromIterable(items))), consumed)
         }

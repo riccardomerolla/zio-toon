@@ -107,7 +107,9 @@ val customConfig = Toon.configured(
   ),
   decoderConfig = DecoderConfig(
     strictMode = false,
-    indentSize = 4
+    indentSize = 4,
+    maxDepth = Some(200),
+    maxArrayLength = Some(5000)
   )
 )
 
@@ -435,6 +437,9 @@ object ToonError {
   case class UnterminatedString(line: Int) extends ToonError
   case class CountMismatch(expected: Int, actual: Int, field: String, line: Int) extends ToonError
   case class WidthMismatch(expected: Int, actual: Int, line: Int) extends ToonError
+  case class DepthLimitExceeded(limit: Int, line: Int) extends ToonError
+  case class ArrayLengthLimitExceeded(limit: Int, actual: Int, context: String, line: Int) extends ToonError
+  case class StringTooLong(limit: Int, actual: Int, line: Int) extends ToonError
 }
 ```
 
@@ -450,7 +455,10 @@ case class EncoderConfig(
 // Decoder configuration  
 case class DecoderConfig(
   strictMode: Boolean = true,       // Enforce strict indentation
-  indentSize: Int = 2               // Expected spaces per level
+  indentSize: Int = 2,              // Expected spaces per level
+  maxDepth: Option[Int] = Some(1000),        // Guard against deeply nested payloads
+  maxArrayLength: Option[Int] = Some(100000),// Guard against huge arrays
+  maxStringLength: Option[Int] = Some(1000000) // Guard against oversized strings
 )
 ```
 

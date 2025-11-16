@@ -1,5 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
+import scala.collection.immutable.VectorMap
+
 import zio._
 import zio.json._
 import zio.json.ast.Json
@@ -145,13 +147,11 @@ object ToonJsonService {
     private def toonValueToJsonAst(value: ToonValue): Json = value match {
       case ToonValue.Str(s)        => Json.Str(s)
       case ToonValue.Num(n)        =>
-        // Handle integers vs decimals
-        if (n.isWhole) Json.Num(n.toLong)
-        else Json.Num(n)
+        Json.Num(n)
       case ToonValue.Bool(b)       => Json.Bool(b)
       case ToonValue.Null          => Json.Null
       case ToonValue.Obj(fields)   =>
-        Json.Obj(fields.map { case (k, v) => k -> toonValueToJsonAst(v) }*)
+        Json.Obj(fields.toVector.map { case (k, v) => k -> toonValueToJsonAst(v) }*)
       case ToonValue.Arr(elements) =>
         Json.Arr(elements.map(toonValueToJsonAst)*)
     }
@@ -160,11 +160,11 @@ object ToonJsonService {
       */
     private def jsonAstToToonValue(json: Json): ToonValue = json match {
       case Json.Str(s)        => ToonValue.Str(s)
-      case Json.Num(n)        => ToonValue.Num(n.doubleValue)
+      case Json.Num(n)        => ToonValue.Num(BigDecimal(n))
       case Json.Bool(b)       => ToonValue.Bool(b)
       case Json.Null          => ToonValue.Null
       case Json.Obj(fields)   =>
-        ToonValue.Obj(Chunk.fromIterable(fields.toSeq.map { case (k, v) => k -> jsonAstToToonValue(v) }))
+        ToonValue.Obj(VectorMap.from(fields.toSeq.map { case (k, v) => k -> jsonAstToToonValue(v) }))
       case Json.Arr(elements) =>
         ToonValue.Arr(Chunk.fromIterable(elements.map(jsonAstToToonValue)))
     }

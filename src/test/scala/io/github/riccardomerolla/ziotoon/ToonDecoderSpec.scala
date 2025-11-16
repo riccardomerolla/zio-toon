@@ -110,6 +110,29 @@ age: 30"""
         assertTrue(result == Right(expected))
       },
     ),
+    suite("Guard rails")(
+      test("fail when depth exceeds configured limit") {
+        val input =
+          """root:
+  child:
+    leaf: 1"""
+        val config = DecoderConfig(maxDepth = Some(1))
+        val result = ToonDecoder.decode(input, config)
+        assertTrue(result == Left(DepthLimitExceeded(1, 3)))
+      },
+      test("fail when array length exceeds configured limit") {
+        val input  = "values[?]: 1,2,3"
+        val config = DecoderConfig(maxArrayLength = Some(2))
+        val result = ToonDecoder.decode(input, config)
+        assertTrue(result == Left(ArrayLengthLimitExceeded(2, 3, "inline array", 1)))
+      },
+      test("fail when string exceeds configured length") {
+        val input  = "id: abcd"
+        val config = DecoderConfig(maxStringLength = Some(3))
+        val result = ToonDecoder.decode(input, config)
+        assertTrue(result == Left(StringTooLong(3, 4, 1)))
+      },
+    ),
     suite("Round-trip")(
       test("encode then decode simple object") {
         val value   = obj(

@@ -1,5 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
+import scala.collection.immutable.VectorMap
+
 import zio.Chunk
 
 /** Core data model for TOON values, representing the JSON data model as specified in the TOON specification.
@@ -58,8 +60,8 @@ object ToonValue {
   /** String value */
   final case class Str(value: String) extends Primitive
 
-  /** Numeric value (stored as Double for simplicity, can be extended) */
-  final case class Num(value: Double) extends Primitive
+  /** Numeric value (stored as BigDecimal for precision and canonical formatting) */
+  final case class Num(value: BigDecimal) extends Primitive
 
   /** Boolean value */
   final case class Bool(value: Boolean) extends Primitive
@@ -68,18 +70,20 @@ object ToonValue {
   case object Null extends Primitive
 
   /** Object value - ordered map from string keys to ToonValue */
-  final case class Obj(fields: Chunk[(String, ToonValue)]) extends ToonValue {
-    def toMap: Map[String, ToonValue] = fields.toMap
+  final case class Obj(fields: VectorMap[String, ToonValue]) extends ToonValue {
+    def toMap: Map[String, ToonValue]          = fields.toMap
+    def toChunk: Chunk[(String, ToonValue)]    = Chunk.fromIterable(fields)
+    def iterator: Iterator[(String, ToonValue)] = fields.iterator
   }
 
   object Obj {
     def apply(fields: (String, ToonValue)*): Obj =
-      Obj(Chunk.fromIterable(fields))
+      Obj(VectorMap.from(fields))
 
     def fromMap(map: Map[String, ToonValue]): Obj =
-      Obj(Chunk.fromIterable(map))
+      Obj(VectorMap.from(map))
 
-    val empty: Obj = Obj(Chunk.empty)
+    val empty: Obj = Obj(VectorMap.empty)
   }
 
   /** Array value - ordered sequence of ToonValue The encoder will determine the best representation (inline, tabular,
@@ -97,8 +101,8 @@ object ToonValue {
         val objs = chunk.collect { case o: Obj => o }
         if (objs.isEmpty) true
         else {
-          val firstKeys = objs.head.fields.map(_._1).toSet
-          objs.tail.forall(obj => obj.fields.map(_._1).toSet == firstKeys)
+          val firstKeys = objs.head.fields.keySet
+          objs.tail.forall(obj => obj.fields.keySet == firstKeys)
         }
       case chunk                                      =>
         // All elements are primitives of compatible types
@@ -117,8 +121,9 @@ object ToonValue {
 
   // Helper methods for creating values
   def str(s: String): Str                    = Str(s)
-  def num(n: Double): Num                    = Num(n)
-  def num(n: Int): Num                       = Num(n.toDouble)
+  def num(n: BigDecimal): Num                = Num(n)
+  def num(n: Double): Num                    = Num(BigDecimal(n))
+  def num(n: Int): Num                       = Num(BigDecimal(n))
   def bool(b: Boolean): Bool                 = Bool(b)
   def obj(fields: (String, ToonValue)*): Obj = Obj(fields: _*)
   def arr(elements: ToonValue*): Arr         = Arr(elements: _*)

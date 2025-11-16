@@ -1,5 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
+import scala.collection.immutable.VectorMap
+
 import zio._
 import zio.test._
 import zio.test.Gen._
@@ -26,32 +28,34 @@ object ToonPropertySpec extends ZIOSpecDefault {
 
   /** Compare two ToonValues with floating point tolerance.
     */
-  def approximatelyEqual(a: ToonValue, b: ToonValue, tolerance: Double = 1e-10): Boolean =
+  def approximatelyEqual(a: ToonValue, b: ToonValue, tolerance: Double = 1e-10): Boolean = {
+    val tol = BigDecimal(tolerance)
     (a, b) match {
       case (Num(n1), Num(n2))               =>
         if (n1 == n2) true
-        else if (n1 == 0.0 || n2 == 0.0) math.abs(n1 - n2) < tolerance
+        else if (n1 == BigDecimal(0) || n2 == BigDecimal(0)) (n1 - n2).abs <= tol
         else {
-          val relativeError = math.abs(n1 - n2) / math.max(math.abs(n1), math.abs(n2))
-          relativeError < tolerance
+          val relativeError = (n1 - n2).abs / n1.abs.max(n2.abs)
+          relativeError <= tol
         }
       case (Str(s1), Str(s2))               => s1 == s2
       case (Bool(b1), Bool(b2))             => b1 == b2
       case (Null, Null)                     => true
       case (Obj(fields1), Obj(fields2))     =>
         fields1.size == fields2.size &&
-        fields1.indices.forall { i =>
-          val (k1, v1) = fields1(i)
-          val (k2, v2) = fields2(i)
-          k1 == k2 && approximatelyEqual(v1, v2, tolerance)
-        }
+        fields1.iterator
+          .zip(fields2.iterator)
+          .forall { case ((k1, v1), (k2, v2)) =>
+            k1 == k2 && approximatelyEqual(v1, v2, tolerance)
+          }
       case (Arr(elements1), Arr(elements2)) =>
         elements1.size == elements2.size &&
-        elements1.indices.forall { i =>
-          approximatelyEqual(elements1(i), elements2(i), tolerance)
-        }
+        elements1
+          .zip(elements2)
+          .forall { case (v1, v2) => approximatelyEqual(v1, v2, tolerance) }
       case _                                => false
     }
+  }
 
   /** Generator for valid primitive TOON values.
     */
@@ -68,7 +72,7 @@ object ToonPropertySpec extends ZIOSpecDefault {
     size   <- Gen.int(1, 10)
     keys   <- Gen.listOfN(size)(genSafeKey)
     values <- Gen.listOfN(size)(genPrimitive)
-  } yield Obj(Chunk.fromIterable(keys.distinct.zip(values)))
+  } yield Obj(VectorMap.from(keys.distinct.zip(values)))
 
   /** Generator for primitive arrays.
     */
@@ -85,7 +89,7 @@ object ToonPropertySpec extends ZIOSpecDefault {
     fieldNames <- Gen.listOfN(fieldCount)(genSafeKey).map(_.distinct)
     rows       <- Gen.listOfN(rowCount) {
                     Gen.listOfN(fieldNames.size)(genPrimitive).map { values =>
-                      Obj(Chunk.fromIterable(fieldNames.zip(values)))
+                      Obj(VectorMap.from(fieldNames.zip(values)))
                     }
                   }
   } yield Arr(Chunk.fromIterable(rows))
@@ -110,7 +114,7 @@ object ToonPropertySpec extends ZIOSpecDefault {
           size   <- Gen.int(1, 5)
           keys   <- Gen.listOfN(size)(genSafeKey).map(_.distinct)
           values <- Gen.listOfN(keys.size)(genNestedValue(depth - 1))
-        } yield Obj(Chunk.fromIterable(keys.zip(values))),
+        } yield Obj(VectorMap.from(keys.zip(values))),
         for {
           size     <- Gen.int(0, 5)
           elements <- Gen.listOfN(size)(genNestedValue(depth - 1))
@@ -213,16 +217,19 @@ object ToonPropertySpec extends ZIOSpecDefault {
     suite("Edge Cases")(
       test("extremely large numbers round-trip") {
         check(Gen.double(Double.MinValue / 2, Double.MaxValue / 2)) { n =>
-          val value = Num(n)
+          val original = BigDecimal(n)
+          val value    = Num(original)
           for {
             encoded <- ToonEncoderService.encode(value)
             decoded <- ToonDecoderService.decode(encoded)
           } yield decoded match {
             case Num(decodedN) =>
               // Allow small floating point errors
-              val diff          = math.abs(n - decodedN)
-              val relativeError = if (n != 0) diff / math.abs(n) else diff
-              assertTrue(relativeError < 1e-10 || decodedN == n)
+              val diff          = (original - decodedN).abs
+              val relativeError =
+                if (original != BigDecimal(0)) diff / original.abs
+                else diff
+              assertTrue(relativeError.toDouble < 1e-10 || decodedN == original)
             case _             =>
               assertTrue(false)
           }

@@ -1,5 +1,7 @@
 package io.github.riccardomerolla.ziotoon
 
+import java.math.{ BigDecimal as JBigDecimal }
+
 import zio.Chunk
 
 import ToonValue._
@@ -58,29 +60,24 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
     *
     * Pure function - no side effects or early returns.
     */
-  private def formatNumber(n: Double): String =
-    if (n.isNaN || n.isInfinity) "null"
-    else if (n == 0.0 || n == -0.0) "0"
-    else if (n == n.toLong.toDouble && n.abs < Long.MaxValue.toDouble) n.toLong.toString
-    else {
-      val formatted = f"$n%.15f"
-      formatted.replaceAll("0+$", "").replaceAll("\\.$", "")
-    }
+  private def formatNumber(n: BigDecimal): String = {
+    val stripped = n.bigDecimal.stripTrailingZeros
+    if (stripped.compareTo(JBigDecimal.ZERO) == 0) "0"
+    else stripped.toPlainString
+  }
 
   /** Encode root-level object (no indentation for first level fields).
     */
   private def encodeRootObject(obj: Obj): Chunk[String] =
-    obj.fields.flatMap {
-      case (key, value) =>
-        encodeField(key, value, 0)
+    obj.toChunk.flatMap { case (key, value) =>
+      encodeField(key, value, 0)
     }
 
   /** Encode an object at a given depth.
     */
   private def encodeObject(obj: Obj, depth: Int): Chunk[String] =
-    obj.fields.flatMap {
-      case (key, value) =>
-        encodeField(key, value, depth)
+    obj.toChunk.flatMap { case (key, value) =>
+      encodeField(key, value, depth)
     }
 
   /** Encode a field (key-value pair) at a given depth.
@@ -164,7 +161,7 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
       case Some(firstObj) =>
         val indentation    = indent * depth
         val rowIndentation = indent * (depth + 1)
-        val fieldNames     = firstObj.fields.map(_._1)
+        val fieldNames     = firstObj.fields.keys.toVector
         val quotedFields   = fieldNames.map(quoteKeyIfNeeded)
         val delimChar      = config.delimiter.char
         val delimSymbol    = if (config.delimiter.isComma) "" else config.delimiter.symbol
@@ -180,10 +177,10 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
         // Encode rows using map instead of mutable collection
         val rows = objs.map { obj =>
           val values = fieldNames.map { fieldName =>
-            obj.fields.find(_._1 == fieldName) match {
-              case Some((_, prim: Primitive)) => encodePrimitive(prim)
-              case Some((_, _))               => "null"
-              case None                       => "null"
+            obj.fields.get(fieldName) match {
+              case Some(prim: Primitive) => encodePrimitive(prim)
+              case Some(_)               => "null"
+              case None                  => "null"
             }
           }
           s"$rowIndentation${values.mkString(delimChar.toString)}"
@@ -215,10 +212,11 @@ class ToonEncoder(config: EncoderConfig = EncoderConfig.default) {
 
     value match {
       case obj: Obj =>
-        if (obj.fields.isEmpty) Chunk.single(s"$itemIndentation-")
+        val entries = obj.toChunk
+        if (entries.isEmpty) Chunk.single(s"$itemIndentation-")
         else {
-          val firstField      = obj.fields.head
-          val remainingFields = obj.fields.tail
+          val firstField      = entries.head
+          val remainingFields = entries.tail
 
           val firstChunk = encodeFirstListField(firstField._1, firstField._2, itemDepth)
           val rest       = remainingFields.flatMap {

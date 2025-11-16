@@ -15,6 +15,8 @@ package io.github.riccardomerolla.ziotoon
   * val customConfig = DecoderConfig(
   *   strictMode = false,
   *   indentSize = 4,
+  *   maxDepth = Some(200),
+  *   maxArrayLength = Some(10000),
   * )
   *
   * // Use with decoder
@@ -30,6 +32,7 @@ package io.github.riccardomerolla.ziotoon
   *   - Array lengths match declared counts
   *   - Indentation is consistent
   *   - Required syntax elements are present
+  *   - Depth and length limits guard against malicious payloads
   *
   * Disable for more lenient parsing.
   *
@@ -37,11 +40,25 @@ package io.github.riccardomerolla.ziotoon
   *   Whether to enable strict mode validation (default: true)
   * @param indentSize
   *   Expected number of spaces per indentation level (default: 2)
+  * @param maxDepth
+  *   Maximum indentation depth allowed (default: Some(1000)). None disables the guard.
+  * @param maxArrayLength
+  *   Maximum number of elements allowed per array (default: Some(100000)). None disables.
+  * @param maxStringLength
+  *   Maximum length for decoded string values and keys (default: Some(1000000)). None disables.
   */
 final case class DecoderConfig(
     strictMode: Boolean = true,
     indentSize: Int = 2,
-  )
+    maxDepth: Option[Int] = Some(1000),
+    maxArrayLength: Option[Int] = Some(100000),
+    maxStringLength: Option[Int] = Some(1000000),
+  ) {
+  require(indentSize > 0, s"indentSize must be positive, found $indentSize")
+  maxDepth.foreach(limit => require(limit > 0, s"maxDepth must be positive, found $limit"))
+  maxArrayLength.foreach(limit => require(limit > 0, s"maxArrayLength must be positive, found $limit"))
+  maxStringLength.foreach(limit => require(limit > 0, s"maxStringLength must be positive, found $limit"))
+}
 
 object DecoderConfig {
 
@@ -49,7 +66,9 @@ object DecoderConfig {
     *
     *   - Strict mode enabled
     *   - 2-space indentation
-    *   - Path expansion off
+    *   - Depth limit: 1000
+    *   - Array length limit: 100000
+    *   - String length limit: 1000000
     */
   val default: DecoderConfig = DecoderConfig()
 }
@@ -127,5 +146,23 @@ object ToonError {
     */
   final case class DelimiterMismatch(message: String, line: Int) extends ToonError {
     override def toString: String = s"$message at line $line"
+  }
+
+  /** Document exceeded configured depth limit.
+    */
+  final case class DepthLimitExceeded(limit: Int, line: Int) extends ToonError {
+    val message: String = s"Exceeded maximum depth $limit at line $line"
+  }
+
+  /** Array exceeded configured length limit.
+    */
+  final case class ArrayLengthLimitExceeded(limit: Int, actual: Int, context: String, line: Int) extends ToonError {
+    val message: String = s"$context exceeds maximum length $limit (was $actual) at line $line"
+  }
+
+  /** String exceeded configured length limit.
+    */
+  final case class StringTooLong(limit: Int, actual: Int, line: Int) extends ToonError {
+    val message: String = s"String length $actual exceeds maximum $limit at line $line"
   }
 }
